@@ -1,0 +1,64 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run (QA)",
+			"type": "shell",
+			"command": "flutter run -d chrome --dart-define=FLAVOR=qa --print-dtd",
+			"group": "build",
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Run (Prod)",
+			"type": "shell",
+			"command": "flutter run -d chrome --dart-define=FLAVOR=prod",
+			"group": "build",
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Build Web (QA)",
+			"type": "shell",
+			"command": "flutter build web --dart-define=FLAVOR=qa --release",
+			"group": "build",
+			"problemMatcher": []
+		},
+		{
+			"label": "Build Web (Prod)",
+			"type": "shell",
+			"command": "flutter build web --dart-define=FLAVOR=prod --release",
+			"group": "build",
+			"problemMatcher": []
+		},
+		{
+			"label": "Deploy Hosting (QA)",
+			"type": "shell",
+			"command": "flutter build web --dart-define=FLAVOR=qa --release && firebase hosting:channel:deploy qa --project kiri-wellness-qa",
+			"group": "build",
+			"problemMatcher": []
+		},
+		{
+			"label": "Deploy Hosting (Prod)",
+			"type": "shell",
+			"command": "flutter build web --dart-define=FLAVOR=prod --release && firebase deploy --only hosting:kiri-wellness-prod --project kiri-wellness-prod",
+			"group": "build",
+			"problemMatcher": []
+		},
+		{
+			"label": "Firebase Emulators",
+			"type": "shell",
+			"command": "firebase emulators:start --project kiri-wellness-qa",
+			"group": "build",
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Deploy Functions to QA",
+			"type": "shell",
+			"command": "firebase deploy --only functions --project kiri-wellness-qa",
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
+}

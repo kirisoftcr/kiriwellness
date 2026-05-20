@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Kiri Wellness (DEV)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main_dev.dart",
+      "args": ["-d", "chrome", "--web-renderer", "canvaskit"],
+      "flutterMode": "debug"
+    },
+    {
+      "name": "Kiri Wellness (PROD)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main_prod.dart",
+      "args": ["-d", "chrome", "--web-renderer", "canvaskit"],
+      "flutterMode": "release"
+    }
+  ]
+}

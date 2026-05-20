@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Appointments
+    match /appointments/{appointmentId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // Clients
+    match /clients/{clientId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // Services — public read (booking page)
+    match /services/{serviceId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // Schedules — public read (slot calculation)
+    match /schedules/{scheduleId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // Settings — public read via function; direct read allowed for all
+    match /settings/{doc} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // Verification codes — only Cloud Functions should write; read locked
+    match /verification_codes/{email} {
+      allow read, write: if false;
+    }
+
+    // Counters
+    match /counters/{doc} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // Packages
+    match /packages/{packageId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    // Client packages (purchased/assigned packages)
+    match /client_packages/{clientPackageId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // Promotions
+    match /promotions/{promotionId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
+    // Raffles
+    match /raffles/{raffleId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+
+      match /tickets/{ticketId} {
+        allow read, write: if isAuthenticated();
+      }
+    }
+  }
+}

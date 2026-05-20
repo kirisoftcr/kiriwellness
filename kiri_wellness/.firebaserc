@@ -1,0 +1,30 @@
+{
+  "projects": {
+    "default": "kiri-wellness-qa",
+    "qa": "kiri-wellness-qa",
+    "prod": "kiri-wellness-prod"
+  },
+  "targets": {
+    "kiri-wellness-qa": {
+      "hosting": {
+        "kiri-wellness-qa": [
+          "kiri-wellness-qa"
+        ],
+        "kiri-wellness-prod": [
+          "kiri-wellness-prod"
+        ],
+        "kiri-wellness-admin": [
+          "kiri-wellness-admin"
+        ]
+      }
+    },
+    "kiri-wellness-prod": {
+      "hosting": {
+        "kiri-wellness-prod": [
+          "kiri-wellness-prod"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}
