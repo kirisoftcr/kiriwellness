@@ -13,6 +13,7 @@ import '../../features/raffles/presentation/raffles_screen.dart';
 import '../../features/clients/presentation/clients_screen.dart';
 import '../../features/appointments/presentation/appointments_screen.dart';
 import '../../features/appointments/presentation/my_appointments_screen.dart';
+import '../../features/landing/presentation/landing_screen.dart';
 import '../../features/schedule/presentation/schedule_screen.dart';
 import '../../features/settings/presentation/settings_screen.dart';
 import 'app_shell.dart';
@@ -35,9 +36,13 @@ final routerProvider = Provider<GoRouter>((ref) {
   // Client site only exposes public booking routes
   if (Environment.isClientSite) {
     return GoRouter(
-      initialLocation: '/book',
+      initialLocation: '/',
       debugLogDiagnostics: Environment.isQA,
       routes: [
+        GoRoute(
+          path: '/',
+          builder: (context, state) => const LandingScreen(),
+        ),
         GoRoute(
           path: '/book',
           builder: (context, state) => const BookingPage(),

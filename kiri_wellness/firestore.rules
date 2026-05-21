@@ -49,9 +49,9 @@ service cloud.firestore {
       allow read, write: if isAuthenticated();
     }
 
-    // Packages
+    // Packages — public read for landing page
     match /packages/{packageId} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       allow write: if isAuthenticated();
     }
 

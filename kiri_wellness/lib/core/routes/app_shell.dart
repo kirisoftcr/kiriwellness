@@ -22,6 +22,7 @@ const _navItems = [
   _NavItem(label: 'Dashboard', icon: Icons.dashboard_outlined, activeIcon: Icons.dashboard, route: '/dashboard'),
   _NavItem(label: 'Citas', icon: Icons.calendar_today_outlined, activeIcon: Icons.calendar_today, route: '/appointments'),
   _NavItem(label: 'Servicios', icon: Icons.spa_outlined, activeIcon: Icons.spa, route: '/services'),
+  _NavItem(label: 'Paquetes', icon: Icons.card_giftcard_outlined, activeIcon: Icons.card_giftcard, route: '/packages'),
   _NavItem(label: 'Clientes', icon: Icons.people_outline, activeIcon: Icons.people, route: '/clients'),
   _NavItem(label: 'Horarios', icon: Icons.schedule_outlined, activeIcon: Icons.schedule, route: '/schedule'),
   _NavItem(label: 'Configuración', icon: Icons.settings_outlined, activeIcon: Icons.settings, route: '/settings'),

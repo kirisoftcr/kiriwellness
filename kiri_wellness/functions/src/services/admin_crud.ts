@@ -4,6 +4,7 @@ import * as logger from "firebase-functions/logger";
 import { getAdminEmail, SECRET_NAMES, sendEmail } from "../config/brevo";
 import { adminBookingNotificationHtml, appointmentConfirmedClientHtml, appointmentThankYouHtml } from "../config/email_templates";
 import { checkAndGrantRewards, buildLoyaltyProgressHtml } from "../loyalty/loyalty_crud";
+import { usePackageSession } from "../packages/packages_crud";
 
 const db = () => admin.firestore();
 
@@ -90,23 +91,32 @@ export const updateAppointmentStatus = onCall(
         const aptSnap = await db().collection("appointments").doc(appointmentId).get();
         const apt = aptSnap.data();
         if (apt?.["clientId"]) {
-          // Increment completedAppointments counter atomically
-          const clientRef = db().collection("clients").doc(apt["clientId"]);
-          await clientRef.update({
-            completedAppointments: admin.firestore.FieldValue.increment(1),
-          });
-          // Read updated count and evaluate loyalty rules
-          const clientSnap = await clientRef.get();
-          const completedCount: number = clientSnap.data()?.["completedAppointments"] ?? 1;
-          await checkAndGrantRewards(apt["clientId"], completedCount);
+          const isPackageAppointment = !!(apt["clientPackageId"]);
 
-          // ── Thank-you email to client ─────────────────────────────────
-          const clientEmail: string | undefined = clientSnap.data()?.["email"];
+          if (isPackageAppointment) {
+            // ── Package appointment: use a session from the client package ──
+            await usePackageSession(apt["clientPackageId"] as string, apt["serviceId"] as string);
+            logger.info("Package session used for appointment", appointmentId);
+          } else {
+            // ── Regular appointment: increment counter and check loyalty ───
+            const clientRef = db().collection("clients").doc(apt["clientId"]);
+            await clientRef.update({
+              completedAppointments: admin.firestore.FieldValue.increment(1),
+            });
+            const clientSnap = await clientRef.get();
+            const completedCount: number = clientSnap.data()?.["completedAppointments"] ?? 1;
+            await checkAndGrantRewards(apt["clientId"], completedCount);
+          }
+
+          // ── Thank-you email to client (all appointment types) ────────────
+          const clientRef2 = db().collection("clients").doc(apt["clientId"]);
+          const clientSnap2 = await clientRef2.get();
+          const clientEmail: string | undefined = clientSnap2.data()?.["email"];
           if (clientEmail) {
             try {
-              const clientName: string = clientSnap.data()?.["name"] ?? clientSnap.data()?.["firstName"] ?? "Cliente";
-              const clientCode: string = clientSnap.data()?.["clientCode"] ?? "";
-              const clientToken: string | undefined = clientSnap.data()?.["clientToken"];
+              const clientName: string = clientSnap2.data()?.["name"] ?? clientSnap2.data()?.["firstName"] ?? "Cliente";
+              const clientCode: string = clientSnap2.data()?.["clientCode"] ?? "";
+              const clientToken: string | undefined = clientSnap2.data()?.["clientToken"];
               const baseUrl = "https://kiriwellness.com";
               const myAppointmentsUrl = clientToken
                 ? `${baseUrl}/#/my-appointments?token=${clientToken}`
@@ -118,8 +128,9 @@ export const updateAppointmentStatus = onCall(
                 weekday: "long", year: "numeric", month: "long", day: "numeric",
               });
 
-              // Build loyalty progress after the new count (rewards already granted)
-              const loyaltyProgressHtml = await buildLoyaltyProgressHtml(apt["clientId"]);
+              const loyaltyProgressHtml = isPackageAppointment
+                ? undefined
+                : (await buildLoyaltyProgressHtml(apt["clientId"]) ?? undefined);
 
               await sendEmail({
                 to: [{ email: clientEmail, name: clientName }],
@@ -130,7 +141,7 @@ export const updateAppointmentStatus = onCall(
                   serviceName: apt["serviceName"] ?? "",
                   date: formattedAptDate,
                   myAppointmentsUrl,
-                  loyaltyProgressHtml: loyaltyProgressHtml ?? undefined,
+                  loyaltyProgressHtml,
                 }),
               });
               logger.info(`Thank-you email sent to ${clientEmail}`);
@@ -140,8 +151,8 @@ export const updateAppointmentStatus = onCall(
           }
         }
       } catch (loyaltyErr) {
-        // Never fail the status update because of loyalty logic
-        logger.error("Loyalty check failed after appointment completed", loyaltyErr);
+        // Never fail the status update because of loyalty/package logic
+        logger.error("Post-completion hook failed", loyaltyErr);
       }
     }
 

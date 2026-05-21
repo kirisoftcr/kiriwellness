@@ -1,12 +1,16 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../shared/models/package_model.dart';
 
 class PackageRepository {
   final FirebaseFirestore _db;
+  late final FirebaseFunctions _functions;
 
-  PackageRepository({FirebaseFirestore? db})
-      : _db = db ?? FirebaseFirestore.instance;
+  PackageRepository({FirebaseFirestore? db, FirebaseFunctions? functions})
+      : _db = db ?? FirebaseFirestore.instance {
+    _functions = functions ?? FirebaseFunctions.instanceFor(region: 'us-central1');
+  }
 
   CollectionReference<Map<String, dynamic>> get _packagesCol =>
       _db.collection('packages');
@@ -14,7 +18,8 @@ class PackageRepository {
   CollectionReference<Map<String, dynamic>> get _clientPackagesCol =>
       _db.collection('client_packages');
 
-  // Packages (catalog)
+  // ── Package catalog ─────────────────────────────────────────────────────
+
   Stream<List<PackageModel>> watchAll() {
     return _packagesCol
         .where('isActive', isEqualTo: true)
@@ -23,27 +28,57 @@ class PackageRepository {
         .map((s) => s.docs.map(PackageModel.fromFirestore).toList());
   }
 
-  Future<void> create(PackageModel pkg) async {
-    await _packagesCol.doc().set(pkg.toFirestore());
+  Future<String> create(PackageModel pkg) async {
+    final callable = _functions.httpsCallable('createPackage');
+    final result = await callable.call({
+      'name': pkg.name,
+      'description': pkg.description,
+      'price': pkg.price,
+      'services': pkg.services.map((s) => s.toMap()).toList(),
+      'discountPercent': pkg.discountPercent,
+      'validityDays': pkg.validityDays,
+    });
+    return result.data['id'] as String;
   }
 
-  Future<void> update(String id, Map<String, dynamic> data) async {
-    await _packagesCol.doc(id).update(data);
+  Future<void> update(String id, PackageModel pkg) async {
+    final callable = _functions.httpsCallable('updatePackage');
+    await callable.call({
+      'id': id,
+      'name': pkg.name,
+      'description': pkg.description,
+      'price': pkg.price,
+      'services': pkg.services.map((s) => s.toMap()).toList(),
+      'discountPercent': pkg.discountPercent,
+      'validityDays': pkg.validityDays,
+      'isActive': pkg.isActive,
+    });
   }
 
-  // Client packages
+  Future<void> delete(String id) async {
+    final callable = _functions.httpsCallable('deletePackage');
+    await callable.call({'id': id});
+  }
+
+  // ── Client packages ─────────────────────────────────────────────────────
+
   Stream<List<ClientPackageModel>> watchClientPackages(String clientId) {
     return _clientPackagesCol
         .where('clientId', isEqualTo: clientId)
+        .orderBy('purchasedAt', descending: true)
         .snapshots()
         .map((s) => s.docs.map(ClientPackageModel.fromFirestore).toList());
   }
 
-  Future<void> assignPackageToClient(ClientPackageModel cp) async {
-    await _clientPackagesCol.doc().set(cp.toFirestore());
+  Future<String> assignPackageToClient({
+    required String clientId,
+    required String packageId,
+  }) async {
+    final callable = _functions.httpsCallable('assignPackageToClient');
+    final result = await callable.call({'clientId': clientId, 'packageId': packageId});
+    return result.data['id'] as String;
   }
 
-  /// All client packages that are not expired and have sessions remaining.
   Stream<List<ClientPackageModel>> watchAllActiveClientPackages() {
     final now = Timestamp.now();
     return _clientPackagesCol
@@ -53,15 +88,6 @@ class PackageRepository {
             .map(ClientPackageModel.fromFirestore)
             .where((cp) => cp.remainingSessions > 0)
             .toList());
-  }
-
-  Future<void> useSession(String clientPackageId) async {
-    await _db.runTransaction((tx) async {
-      final ref = _clientPackagesCol.doc(clientPackageId);
-      final snap = await tx.get(ref);
-      final used = (snap.data()?['usedSessions'] ?? 0) as int;
-      tx.update(ref, {'usedSessions': used + 1});
-    });
   }
 }
 
@@ -76,6 +102,11 @@ final packageRepositoryProvider = Provider<PackageRepository>(
 final packagesStreamProvider = StreamProvider<List<PackageModel>>(
   (ref) => ref.watch(packageRepositoryProvider).watchAll(),
 );
+
+final clientPackagesStreamProvider =
+    StreamProvider.family<List<ClientPackageModel>, String>((ref, clientId) {
+  return ref.watch(packageRepositoryProvider).watchClientPackages(clientId);
+});
 
 final allActiveClientPackagesStreamProvider =
     StreamProvider<List<ClientPackageModel>>((ref) {

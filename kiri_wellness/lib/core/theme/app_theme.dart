@@ -2,26 +2,28 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 class AppTheme {
-  // Brand Colors
-  static const Color primary = Color(0xFF7B9E87);       // sage green
-  static const Color primaryDark = Color(0xFF4A7560);
-  static const Color primaryLight = Color(0xFFB8D4BE);
-  static const Color secondary = Color(0xFFD4A5A5);     // dusty rose
-  static const Color secondaryLight = Color(0xFFF2DEDE);
-  static const Color accent = Color(0xFFE8C9A0);        // warm beige
-  static const Color background = Color(0xFFF9F6F2);
-  static const Color surface = Color(0xFFFFFFFF);
-  static const Color textPrimary = Color(0xFF2D2D2D);
-  static const Color textSecondary = Color(0xFF757575);
-  static const Color error = Color(0xFFE57373);
-  static const Color success = Color(0xFF81C784);
-  static const Color warning = Color(0xFFFFB74D);
+  // ── Kiri Wellness brand palette ───────────────────────────────────────────
+  static const Color primary     = Color(0xFF9D87BC); // lavender – CTAs & accents
+  static const Color primaryDark = Color(0xFF4A5240); // dark olive – headers & nav
+  static const Color primaryLight= Color(0xFFD4C8E8); // lavender light
+  static const Color secondary   = Color(0xFF9B8B7A); // warm taupe
+  static const Color secondaryLight = Color(0xFFD4C4B0);
+  static const Color accent      = Color(0xFF9D87BC); // lavender
+  static const Color background  = Color(0xFFF0EBE0); // warm cream
+  static const Color surface     = Color(0xFFFFFFFF);
+  static const Color textPrimary = Color(0xFF2D2A25);
+  static const Color textSecondary = Color(0xFF9B8B7A); // taupe
+  static const Color error       = Color(0xFFE57373);
+  static const Color success     = Color(0xFF81C784);
+  static const Color warning     = Color(0xFFFFB74D);
+  // Olive shades used as surface tints
+  static const Color oliveLight  = Color(0xFFE8E6E0);
 
   static ThemeData get lightTheme {
     return ThemeData(
       useMaterial3: true,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: primary,
+        seedColor: primaryDark,
         primary: primary,
         secondary: secondary,
         surface: surface,
@@ -30,20 +32,20 @@ class AppTheme {
       ),
       scaffoldBackgroundColor: background,
       textTheme: GoogleFonts.latoTextTheme().copyWith(
-        displayLarge: GoogleFonts.playfairDisplay(
-          fontSize: 32,
-          fontWeight: FontWeight.bold,
-          color: textPrimary,
-        ),
-        displayMedium: GoogleFonts.playfairDisplay(
-          fontSize: 24,
-          fontWeight: FontWeight.bold,
-          color: textPrimary,
-        ),
-        titleLarge: GoogleFonts.lato(
-          fontSize: 20,
+        displayLarge: GoogleFonts.cormorantGaramond(
+          fontSize: 36,
           fontWeight: FontWeight.w600,
-          color: textPrimary,
+          color: primaryDark,
+        ),
+        displayMedium: GoogleFonts.cormorantGaramond(
+          fontSize: 28,
+          fontWeight: FontWeight.w600,
+          color: primaryDark,
+        ),
+        titleLarge: GoogleFonts.cormorantGaramond(
+          fontSize: 22,
+          fontWeight: FontWeight.w600,
+          color: primaryDark,
         ),
         titleMedium: GoogleFonts.lato(
           fontSize: 16,
@@ -62,11 +64,11 @@ class AppTheme {
         backgroundColor: surface,
         elevation: 0,
         centerTitle: false,
-        iconTheme: const IconThemeData(color: textPrimary),
-        titleTextStyle: GoogleFonts.playfairDisplay(
-          fontSize: 20,
-          fontWeight: FontWeight.bold,
-          color: textPrimary,
+        iconTheme: const IconThemeData(color: primaryDark),
+        titleTextStyle: GoogleFonts.cormorantGaramond(
+          fontSize: 22,
+          fontWeight: FontWeight.w600,
+          color: primaryDark,
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
@@ -80,8 +82,8 @@ class AppTheme {
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          foregroundColor: primary,
-          side: const BorderSide(color: primary),
+          foregroundColor: primaryDark,
+          side: const BorderSide(color: primaryDark),
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
@@ -91,20 +93,20 @@ class AppTheme {
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: Colors.grey.shade200),
+          side: const BorderSide(color: Color(0xFFE6DFCF)),
         ),
         margin: EdgeInsets.zero,
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: Colors.grey.shade50,
+        fillColor: background,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.grey.shade300),
+          borderSide: const BorderSide(color: Color(0xFFD4C4B0)),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: Colors.grey.shade300),
+          borderSide: const BorderSide(color: Color(0xFFD4C4B0)),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
@@ -119,18 +121,18 @@ class AppTheme {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       ),
-      dividerTheme: DividerThemeData(color: Colors.grey.shade200, thickness: 1),
+      dividerTheme: const DividerThemeData(color: Color(0xFFE6DFCF), thickness: 1),
       navigationRailTheme: NavigationRailThemeData(
         backgroundColor: surface,
         selectedIconTheme: const IconThemeData(color: primary),
-        unselectedIconTheme: IconThemeData(color: Colors.grey.shade400),
+        unselectedIconTheme: const IconThemeData(color: Color(0xFFBBB0A0)),
         selectedLabelTextStyle: GoogleFonts.lato(
-          color: primary,
+          color: primaryDark,
           fontWeight: FontWeight.w600,
           fontSize: 12,
         ),
         unselectedLabelTextStyle: GoogleFonts.lato(
-          color: Colors.grey.shade500,
+          color: secondary,
           fontSize: 12,
         ),
         indicatorColor: primaryLight.withValues(alpha: 0.4),
@@ -138,3 +140,4 @@ class AppTheme {
     );
   }
 }
+

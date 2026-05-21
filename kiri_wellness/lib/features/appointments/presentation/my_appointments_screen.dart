@@ -22,6 +22,7 @@ class _MyAppointmentsState {
   final bool loading;
   final String? error;
   final List<Map<String, dynamic>> appointments;
+  final List<Map<String, dynamic>> packages;
 
   const _MyAppointmentsState({
     this.phase = _Phase.email,
@@ -30,6 +31,7 @@ class _MyAppointmentsState {
     this.loading = false,
     this.error,
     this.appointments = const [],
+    this.packages = const [],
   });
 
   _MyAppointmentsState copyWith({
@@ -39,6 +41,7 @@ class _MyAppointmentsState {
     bool? loading,
     String? error,
     List<Map<String, dynamic>>? appointments,
+    List<Map<String, dynamic>>? packages,
     bool clearError = false,
   }) =>
       _MyAppointmentsState(
@@ -48,6 +51,7 @@ class _MyAppointmentsState {
         loading: loading ?? this.loading,
         error: clearError ? null : (error ?? this.error),
         appointments: appointments ?? this.appointments,
+        packages: packages ?? this.packages,
       );
 }
 
@@ -63,12 +67,21 @@ class _MyAppointmentsNotifier extends StateNotifier<_MyAppointmentsState> {
       final data = result.data;
       final rawList = data['appointments'] as List? ?? [];
       final apts = rawList.cast<Map<String, dynamic>>();
+      final clientId = data['clientId'] as String? ?? '';
+
+      // Also load packages in parallel
+      List<Map<String, dynamic>> pkgs = [];
+      try {
+        pkgs = await _fetchPackages(token: token);
+      } catch (_) {}
+
       state = state.copyWith(
           loading: false,
           phase: _Phase.appointments,
           email: data['email'] as String? ?? '',
-          clientId: data['clientId'] as String? ?? '',
-          appointments: apts);
+          clientId: clientId,
+          appointments: apts,
+          packages: pkgs);
     } on FirebaseFunctionsException catch (e) {
       state = state.copyWith(
           loading: false, phase: _Phase.email, error: e.message);
@@ -76,6 +89,15 @@ class _MyAppointmentsNotifier extends StateNotifier<_MyAppointmentsState> {
       state = state.copyWith(
           loading: false, phase: _Phase.email, error: e.toString());
     }
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchPackages({String? token, String? clientId}) async {
+    final callable = FirebaseFunctions.instanceFor(region: "us-central1")
+        .httpsCallable('getClientPackages');
+    final payload = token != null ? {'token': token} : {'clientId': clientId};
+    final result = await callable.call<Map<String, dynamic>>(payload);
+    final raw = result.data['packages'] as List? ?? [];
+    return raw.cast<Map<String, dynamic>>();
   }
 
   Future<void> sendCode(String email) async {
@@ -103,11 +125,19 @@ class _MyAppointmentsNotifier extends StateNotifier<_MyAppointmentsState> {
       final data = result.data;
       final rawList = data['appointments'] as List? ?? [];
       final apts = rawList.cast<Map<String, dynamic>>();
+      final clientId = data['clientId'] as String? ?? '';
+
+      List<Map<String, dynamic>> pkgs = [];
+      try {
+        pkgs = await _fetchPackages(clientId: clientId);
+      } catch (_) {}
+
       state = state.copyWith(
           loading: false,
           phase: _Phase.appointments,
-          clientId: data['clientId'] as String? ?? '',
-          appointments: apts);
+          clientId: clientId,
+          appointments: apts,
+          packages: pkgs);
     } on FirebaseFunctionsException catch (e) {
       state = state.copyWith(loading: false, error: e.message);
     } catch (e) {
@@ -482,6 +512,7 @@ class _AppointmentsList extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final notifier = ref.read(_myAptProvider.notifier);
     final apts = state.appointments;
+    final packages = state.packages;
 
     // Sort: active first, then cancelled/completed
     final active = apts
@@ -490,6 +521,11 @@ class _AppointmentsList extends ConsumerWidget {
     final past = apts
         .where((a) => a['status'] == 'cancelled' || a['status'] == 'completed')
         .toList();
+
+    final activePackages =
+        packages.where((p) => p['status'] == 'active').toList();
+    final inactivePackages =
+        packages.where((p) => p['status'] != 'active').toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -528,6 +564,32 @@ class _AppointmentsList extends ConsumerWidget {
             ),
           ),
         ),
+
+        // ── Packages section ───────────────────────────────────────────────
+        if (packages.isNotEmpty) ...[
+          const SizedBox(height: 32),
+          Text('Mis paquetes',
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                  color: AppTheme.primaryDark,
+                  fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          Text('${packages.length} paquete${packages.length == 1 ? '' : 's'} asignado${packages.length == 1 ? '' : 's'}',
+              style: const TextStyle(
+                  color: AppTheme.textSecondary, fontSize: 13)),
+          const SizedBox(height: 16),
+          if (activePackages.isNotEmpty) ...[
+            const _SectionLabel('Activos'),
+            const SizedBox(height: 8),
+            ...activePackages.map((p) => _PackageProgressCard(pkg: p)),
+          ],
+          if (inactivePackages.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            const _SectionLabel('Completados / Expirados'),
+            const SizedBox(height: 8),
+            ...inactivePackages.map((p) => _PackageProgressCard(pkg: p)),
+          ],
+        ],
+
         const SizedBox(height: 24),
         if (apts.isEmpty)
           const Center(
@@ -581,6 +643,183 @@ class _SectionLabel extends StatelessWidget {
             fontSize: 13,
             color: AppTheme.textSecondary,
             letterSpacing: 0.5));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Package Progress Card (client portal)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _PackageProgressCard extends StatelessWidget {
+  final Map<String, dynamic> pkg;
+  const _PackageProgressCard({required this.pkg});
+
+  @override
+  Widget build(BuildContext context) {
+    final name = pkg['packageName'] as String? ?? '';
+    final description = pkg['packageDescription'] as String? ?? '';
+    final status = pkg['status'] as String? ?? 'active';
+    final rawServices = pkg['services'] as List<dynamic>? ?? [];
+    final expiresAt = pkg['expiresAt'] as String? ?? '';
+
+    String expiresLabel = '';
+    try {
+      final d = DateTime.parse(expiresAt).toLocal();
+      expiresLabel = 'Vence ${d.day}/${d.month}/${d.year}';
+    } catch (_) {}
+
+    final isActive = status == 'active';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isActive ? AppTheme.primaryLight : const Color(0xFFE0E0E0),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.card_giftcard_outlined,
+                  size: 18, color: AppTheme.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(name,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                        color: AppTheme.textPrimary)),
+              ),
+              _PkgStatusBadge(status),
+            ],
+          ),
+          if (description.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(description,
+                style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+          ],
+          if (expiresLabel.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Row(children: [
+              const Icon(Icons.calendar_today_outlined,
+                  size: 12, color: AppTheme.textSecondary),
+              const SizedBox(width: 4),
+              Text(expiresLabel,
+                  style: const TextStyle(
+                      fontSize: 12, color: AppTheme.textSecondary)),
+            ]),
+          ],
+          const SizedBox(height: 12),
+          ...rawServices.map((sRaw) {
+            final s = sRaw as Map<String, dynamic>;
+            final sName = s['serviceName'] as String? ?? '';
+            final total = (s['totalSessions'] as num?)?.toInt() ?? 0;
+            final used = (s['usedSessions'] as num?)?.toInt() ?? 0;
+            final remaining = total - used;
+            final progress = total > 0 ? used / total : 0.0;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(sName,
+                            style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: AppTheme.textPrimary)),
+                      ),
+                      Text('$used/$total sesiones',
+                          style: const TextStyle(
+                              fontSize: 12, color: AppTheme.textSecondary)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: progress.clamp(0.0, 1.0),
+                      minHeight: 6,
+                      backgroundColor:
+                          AppTheme.primaryLight.withValues(alpha: 0.3),
+                      valueColor: const AlwaysStoppedAnimation<Color>(
+                          AppTheme.primary),
+                    ),
+                  ),
+                  if (isActive && remaining > 0) ...[
+                    const SizedBox(height: 6),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          if (kIsWeb) {
+                            html.window.location.href = '/#/book';
+                          }
+                        },
+                        icon: const Icon(Icons.add_circle_outline, size: 14),
+                        label: Text(
+                            'Agendar ($remaining disponible${remaining == 1 ? '' : 's'})'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppTheme.primary,
+                          side: const BorderSide(color: AppTheme.primary),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 6),
+                          textStyle: const TextStyle(fontSize: 12),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+}
+
+class _PkgStatusBadge extends StatelessWidget {
+  final String status;
+  const _PkgStatusBadge(this.status);
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color, bg) = switch (status) {
+      'active' => (
+          'Activo',
+          AppTheme.primary,
+          AppTheme.primaryLight.withValues(alpha: 0.3)
+        ),
+      'completed' => (
+          'Completado',
+          AppTheme.textSecondary,
+          const Color(0xFFF5F5F5)
+        ),
+      'expired' => ('Expirado', AppTheme.error, const Color(0xFFFFEBEE)),
+      _ => (
+          'Activo',
+          AppTheme.primary,
+          AppTheme.primaryLight.withValues(alpha: 0.3)
+        ),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration:
+          BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
+      child: Text(label,
+          style: TextStyle(
+              color: color, fontSize: 11, fontWeight: FontWeight.w600)),
+    );
   }
 }
 
