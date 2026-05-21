@@ -194,6 +194,7 @@ export function appointmentConfirmedClientHtml(params: {
   notes?: string;
   myAppointmentsUrl: string;
   googleCalendarUrl: string;
+  loyaltyProgressHtml?: string;
 }): string {
   return `
 <!DOCTYPE html>
@@ -234,6 +235,8 @@ export function appointmentConfirmedClientHtml(params: {
                 <tr><td style="padding:12px 16px;color:#888;font-size:13px;border-top:1px solid #e8e8e8;">Hora</td><td style="padding:12px 16px;color:#3d3d3d;font-size:13px;font-weight:600;border-top:1px solid #e8e8e8;">${formatTime12h(params.time)}</td></tr>
                 ${params.notes ? `<tr style="background:#f9f9f9;"><td style="padding:12px 16px;color:#888;font-size:13px;border-top:1px solid #e8e8e8;">Notas</td><td style="padding:12px 16px;color:#3d3d3d;font-size:13px;border-top:1px solid #e8e8e8;">${params.notes}</td></tr>` : ""}
               </table>
+
+              ${params.loyaltyProgressHtml ?? ""}
 
               <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;">
                 <tr>
@@ -364,6 +367,107 @@ export function appointmentReminderHtml(params: {
             </td>
           </tr>
           <tr><td style="background:#F0F7F2;padding:20px 40px;text-align:center;border-top:1px solid #e0e0e0;"><p style="margin:0;color:#888;font-size:12px;">© ${new Date().getFullYear()} Kiri Wellness · Costa Rica</p></td></tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+/**
+ * Returns the HTML body for a "thank you for your visit" email sent to the
+ * client when the admin marks their appointment as completed.
+ */
+export function appointmentThankYouHtml(params: {
+  clientName: string;
+  clientCode: string;
+  serviceName: string;
+  date: string;
+  myAppointmentsUrl: string;
+  loyaltyProgressHtml?: string;
+}): string {
+  return `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>¡Gracias por tu visita! – Kiri Wellness</title>
+</head>
+<body style="margin:0;padding:0;background:#F9F6F2;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F9F6F2;padding:40px 0;">
+    <tr>
+      <td align="center">
+        <table width="560" cellpadding="0" cellspacing="0"
+          style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+
+          <!-- Header -->
+          <tr>
+            <td style="background:linear-gradient(135deg,#7B9E87 0%,#4A7560 100%);padding:40px 40px 32px;text-align:center;">
+              <p style="margin:0 0 6px;color:#d4ead9;font-size:13px;letter-spacing:4px;text-transform:uppercase;">Kiri Wellness</p>
+              <h1 style="margin:0;color:#ffffff;font-size:30px;font-family:Georgia,serif;font-weight:normal;">
+                ¡Gracias por tu visita! 🌿
+              </h1>
+              <p style="margin:10px 0 0;color:#c8e6c9;font-size:14px;font-style:italic;">· tu pausa perfecta ·</p>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:36px 40px 8px;">
+              <p style="margin:0 0 20px;color:#444;font-size:16px;line-height:1.7;">
+                Hola <strong>${params.clientName}</strong>, fue un placer recibirte hoy en Kiri Wellness.
+                Esperamos que hayas disfrutado tu sesión de <strong>${params.serviceName}</strong>
+                y que te sientas renovado/a y en plena paz. 💆
+              </p>
+              <p style="margin:0 0 28px;color:#555;font-size:14px;line-height:1.7;">
+                Tu bienestar es nuestra prioridad. Si tienes algún comentario sobre tu experiencia o
+                deseas reagendar una nueva cita, con gusto te atendemos. ¡Nos encanta verte por aquí!
+              </p>
+
+              <!-- Appointment summary -->
+              <table width="100%" cellpadding="0" cellspacing="0"
+                style="border:1px solid #e8e8e8;border-radius:8px;overflow:hidden;margin-bottom:28px;">
+                <tr style="background:#f9f9f9;">
+                  <td style="padding:11px 16px;color:#888;font-size:13px;width:40%;">Servicio</td>
+                  <td style="padding:11px 16px;color:#3d3d3d;font-size:13px;font-weight:600;">${params.serviceName}</td>
+                </tr>
+                <tr>
+                  <td style="padding:11px 16px;color:#888;font-size:13px;border-top:1px solid #e8e8e8;">Fecha</td>
+                  <td style="padding:11px 16px;color:#3d3d3d;font-size:13px;font-weight:600;border-top:1px solid #e8e8e8;">${params.date}</td>
+                </tr>
+                <tr style="background:#f9f9f9;">
+                  <td style="padding:11px 16px;color:#888;font-size:13px;border-top:1px solid #e8e8e8;">Código cliente</td>
+                  <td style="padding:11px 16px;color:#7B9E87;font-size:13px;font-weight:700;border-top:1px solid #e8e8e8;letter-spacing:2px;">${params.clientCode}</td>
+                </tr>
+              </table>
+
+              <!-- Loyalty progress block (injected if program is active) -->
+              ${params.loyaltyProgressHtml ?? ""}
+
+              <!-- CTA -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:8px;">
+                <tr>
+                  <td align="center">
+                    <a href="${params.myAppointmentsUrl}"
+                      style="display:inline-block;background:#7B9E87;color:#ffffff;text-decoration:none;
+                             padding:14px 36px;border-radius:8px;font-size:15px;font-weight:600;">
+                      📅 Agendar mi próxima cita
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background:#F0F7F2;padding:20px 40px;text-align:center;border-top:1px solid #e0e0e0;">
+              <p style="margin:0 0 4px;color:#7B9E87;font-size:13px;font-weight:600;">Kiri Wellness · Costa Rica</p>
+              <p style="margin:0;color:#aaa;font-size:12px;">© ${new Date().getFullYear()} Todos los derechos reservados</p>
+            </td>
+          </tr>
+
         </table>
       </td>
     </tr>

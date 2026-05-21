@@ -7,6 +7,7 @@ import '../../../shared/models/service_model.dart';
 import '../../../data/repositories/client_repository.dart';
 import '../../../data/repositories/appointment_repository.dart';
 import '../../../data/repositories/service_repository.dart';
+import '../../loyalty/presentation/client_rewards_panel.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Screen
@@ -190,7 +191,7 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
 // Tile
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _ClientTile extends StatelessWidget {
+class _ClientTile extends ConsumerWidget {
   final ClientModel client;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
@@ -203,7 +204,7 @@ class _ClientTile extends StatelessWidget {
       required this.onNewAppointment});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final initials = _initials(client.fullName);
     final hasEmail = client.email != null && client.email!.isNotEmpty;
     final hasNotes = client.notes != null && client.notes!.isNotEmpty;
@@ -211,11 +212,14 @@ class _ClientTile extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
             // Avatar
             CircleAvatar(
               radius: 24,
@@ -330,6 +334,33 @@ class _ClientTile extends StatelessWidget {
             ),
           ],
         ),
+          ), // end Padding
+          // ── Rewards expansion ──────────────────────────────────────────
+          Theme(
+            data: Theme.of(context).copyWith(
+              dividerColor: Colors.transparent,
+            ),
+            child: ExpansionTile(
+              tilePadding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+              leading: const Icon(Icons.card_giftcard_outlined,
+                  color: AppTheme.primary, size: 20),
+              title: const Text(
+                'Regalías',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.primary),
+              ),
+              children: [
+                ClientRewardsPanel(
+                  clientId: client.id,
+                  clientName: client.fullName,
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

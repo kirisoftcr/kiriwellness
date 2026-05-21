@@ -4,6 +4,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../data/repositories/settings_repository.dart';
 import '../../../shared/models/settings_model.dart';
 import '../../../shared/widgets/section_header.dart';
+import '../../loyalty/presentation/loyalty_settings_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -181,6 +182,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
                 const SizedBox(height: 24),
 
+                // ── Loyalty / Fidelización ────────────────────────────────
+                _LoyaltyNavigationCard(),
+
+                const SizedBox(height: 24),
+
                 // Save button
                 SizedBox(
                   width: double.infinity,
@@ -293,6 +299,72 @@ class _SettingLabel extends StatelessWidget {
     );
   }
 }
+
+class _LoyaltyNavigationCard extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => Scaffold(
+              appBar: AppBar(
+                title: const Text('Programa de Regalías'),
+                backgroundColor: AppTheme.surface,
+                foregroundColor: AppTheme.textPrimary,
+                elevation: 0,
+              ),
+              body: const LoyaltySettingsScreen(),
+            ),
+          ),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE8E8E8)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: AppTheme.primary.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.card_giftcard_outlined,
+                  color: AppTheme.primary),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Programa de Regalías',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 2),
+                  const Text(
+                    'Configura recompensas automáticas para clientes frecuentes',
+                    style: TextStyle(
+                        fontSize: 12, color: AppTheme.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: AppTheme.textSecondary),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 
 class _AdminEmailsCard extends StatelessWidget {
   final List<String> emails;

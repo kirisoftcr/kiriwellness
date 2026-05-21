@@ -13,3 +13,4 @@ export { getAvailableSlots } from "./booking/get_available_slots";
 export { getAppointmentsByToken } from "./booking/get_appointments_by_token";
 export { lookupClientByEmail, sendVerificationCode, verifyClientCode, cancelAppointmentByClient, confirmAppointmentByClient } from "./booking/client_portal";
 export { getSettings, updateSettings, updateAppointmentStatus } from "./services/admin_crud";
+export { getLoyaltySettings, updateLoyaltySettings, redeemLoyaltyReward } from "./loyalty/loyalty_crud";

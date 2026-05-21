@@ -11,6 +11,7 @@ class ClientModel {
   final String? notes;
   final HealthFormModel? healthForm;
   final int loyaltyPoints;
+  final int completedAppointments;
   final DateTime createdAt;
   final String? photoUrl;
 
@@ -25,6 +26,7 @@ class ClientModel {
     this.notes,
     this.healthForm,
     this.loyaltyPoints = 0,
+    this.completedAppointments = 0,
     required this.createdAt,
     this.photoUrl,
   });
@@ -48,6 +50,7 @@ class ClientModel {
           ? HealthFormModel.fromMap(data['healthForm'])
           : null,
       loyaltyPoints: data['loyaltyPoints'] ?? 0,
+      completedAppointments: data['completedAppointments'] ?? 0,
       createdAt: (data['createdAt'] as Timestamp).toDate(),
       photoUrl: data['photoUrl'],
     );

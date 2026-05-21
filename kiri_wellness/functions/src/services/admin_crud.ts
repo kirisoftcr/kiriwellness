@@ -2,7 +2,8 @@ import * as admin from "firebase-admin";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { getAdminEmail, SECRET_NAMES, sendEmail } from "../config/brevo";
-import { adminBookingNotificationHtml, appointmentConfirmedClientHtml } from "../config/email_templates";
+import { adminBookingNotificationHtml, appointmentConfirmedClientHtml, appointmentThankYouHtml } from "../config/email_templates";
+import { checkAndGrantRewards, buildLoyaltyProgressHtml } from "../loyalty/loyalty_crud";
 
 const db = () => admin.firestore();
 
@@ -83,6 +84,67 @@ export const updateAppointmentStatus = onCall(
 
     logger.info(`Appointment ${appointmentId} status updated to ${status}`);
 
+    // ── Loyalty: check and grant rewards when a cita is completed ──────────
+    if (status === "completed") {
+      try {
+        const aptSnap = await db().collection("appointments").doc(appointmentId).get();
+        const apt = aptSnap.data();
+        if (apt?.["clientId"]) {
+          // Increment completedAppointments counter atomically
+          const clientRef = db().collection("clients").doc(apt["clientId"]);
+          await clientRef.update({
+            completedAppointments: admin.firestore.FieldValue.increment(1),
+          });
+          // Read updated count and evaluate loyalty rules
+          const clientSnap = await clientRef.get();
+          const completedCount: number = clientSnap.data()?.["completedAppointments"] ?? 1;
+          await checkAndGrantRewards(apt["clientId"], completedCount);
+
+          // ── Thank-you email to client ─────────────────────────────────
+          const clientEmail: string | undefined = clientSnap.data()?.["email"];
+          if (clientEmail) {
+            try {
+              const clientName: string = clientSnap.data()?.["name"] ?? clientSnap.data()?.["firstName"] ?? "Cliente";
+              const clientCode: string = clientSnap.data()?.["clientCode"] ?? "";
+              const clientToken: string | undefined = clientSnap.data()?.["clientToken"];
+              const baseUrl = "https://kiriwellness.com";
+              const myAppointmentsUrl = clientToken
+                ? `${baseUrl}/#/my-appointments?token=${clientToken}`
+                : `${baseUrl}/#/my-appointments`;
+
+              const [aptYear, aptMonth, aptDay] = (apt["date"] as string).split("-").map(Number);
+              const aptDateObj = new Date(aptYear, aptMonth - 1, aptDay);
+              const formattedAptDate = aptDateObj.toLocaleDateString("es-CR", {
+                weekday: "long", year: "numeric", month: "long", day: "numeric",
+              });
+
+              // Build loyalty progress after the new count (rewards already granted)
+              const loyaltyProgressHtml = await buildLoyaltyProgressHtml(apt["clientId"]);
+
+              await sendEmail({
+                to: [{ email: clientEmail, name: clientName }],
+                subject: `🌿 ¡Gracias por tu visita, ${clientName}! – Kiri Wellness`,
+                htmlContent: appointmentThankYouHtml({
+                  clientName,
+                  clientCode,
+                  serviceName: apt["serviceName"] ?? "",
+                  date: formattedAptDate,
+                  myAppointmentsUrl,
+                  loyaltyProgressHtml: loyaltyProgressHtml ?? undefined,
+                }),
+              });
+              logger.info(`Thank-you email sent to ${clientEmail}`);
+            } catch (thankYouErr) {
+              logger.warn("Thank-you email failed", thankYouErr);
+            }
+          }
+        }
+      } catch (loyaltyErr) {
+        // Never fail the status update because of loyalty logic
+        logger.error("Loyalty check failed after appointment completed", loyaltyErr);
+      }
+    }
+
     // ── Send emails when admin confirms or cancels ─────────────────────────
     if (status === "confirmed" || status === "cancelled") {
       try {
@@ -145,6 +207,7 @@ export const updateAppointmentStatus = onCall(
         // Notify client
         const clientEmail: string | undefined = client?.["email"];
         if (clientEmail && status === "confirmed") {
+          const loyaltyProgressHtml = await buildLoyaltyProgressHtml(apt["clientId"]);
           await sendEmail({
             to: [{ email: clientEmail, name: commonParams.clientName }],
             subject: `✅ Cita confirmada – ${apt["serviceName"]} el ${formattedDate}`,
@@ -157,6 +220,7 @@ export const updateAppointmentStatus = onCall(
               notes: commonParams.notes,
               myAppointmentsUrl,
               googleCalendarUrl,
+              loyaltyProgressHtml: loyaltyProgressHtml ?? undefined,
             }),
           });
           logger.info("Confirmation email sent to client", clientEmail);
