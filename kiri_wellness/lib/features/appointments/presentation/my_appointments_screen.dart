@@ -188,6 +188,22 @@ class _MyAppointmentsNotifier extends StateNotifier<_MyAppointmentsState> {
       state = state.copyWith(phase: _Phase.email, clearError: true);
     }
   }
+
+  Future<void> refreshAppointments() async {
+    final clientId = state.clientId;
+    if (clientId.isEmpty) return;
+    try {
+      final aptCallable = FirebaseFunctions.instanceFor(region: "us-central1")
+          .httpsCallable('getMyAppointments');
+      final r1 = await aptCallable.call<Map<String, dynamic>>({'clientId': clientId});
+      final rawApts = r1.data['appointments'] as List? ?? [];
+      final pkgs = await _fetchPackages(clientId: clientId);
+      state = state.copyWith(
+        appointments: rawApts.cast<Map<String, dynamic>>(),
+        packages: pkgs,
+      );
+    } catch (_) {}
+  }
 }
 
 final _myAptProvider =
@@ -580,13 +596,21 @@ class _AppointmentsList extends ConsumerWidget {
           if (activePackages.isNotEmpty) ...[
             const _SectionLabel('Activos'),
             const SizedBox(height: 8),
-            ...activePackages.map((p) => _PackageProgressCard(pkg: p)),
+            ...activePackages.map((p) => _PackageProgressCard(
+                  pkg: p,
+                  clientId: state.clientId,
+                  onBookingSuccess: () => notifier.refreshAppointments(),
+                )),
           ],
           if (inactivePackages.isNotEmpty) ...[
             const SizedBox(height: 16),
             const _SectionLabel('Completados / Expirados'),
             const SizedBox(height: 8),
-            ...inactivePackages.map((p) => _PackageProgressCard(pkg: p)),
+            ...inactivePackages.map((p) => _PackageProgressCard(
+                  pkg: p,
+                  clientId: state.clientId,
+                  onBookingSuccess: () {},
+                )),
           ],
         ],
 
@@ -652,7 +676,13 @@ class _SectionLabel extends StatelessWidget {
 
 class _PackageProgressCard extends StatelessWidget {
   final Map<String, dynamic> pkg;
-  const _PackageProgressCard({required this.pkg});
+  final String clientId;
+  final VoidCallback onBookingSuccess;
+  const _PackageProgressCard({
+    required this.pkg,
+    required this.clientId,
+    required this.onBookingSuccess,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -758,9 +788,28 @@ class _PackageProgressCard extends StatelessWidget {
                     Align(
                       alignment: Alignment.centerRight,
                       child: OutlinedButton.icon(
-                        onPressed: () {
-                          if (kIsWeb) {
-                            html.window.location.href = '/#/book';
+                        onPressed: () async {
+                          final result = await showDialog<bool>(
+                            context: context,
+                            builder: (_) => _PackageBookingDialog(
+                              clientId: clientId,
+                              clientPackageId: pkg['id'] as String,
+                              serviceId: s['serviceId'] as String,
+                              serviceName: sName,
+                              packageName: name,
+                              remainingSessions: remaining,
+                            ),
+                          );
+                          if (result == true) {
+                            onBookingSuccess();
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('¡Cita agendada correctamente!'),
+                                  backgroundColor: Color(0xFF2E7D32),
+                                ),
+                              );
+                            }
                           }
                         },
                         icon: const Icon(Icons.add_circle_outline, size: 14),
@@ -1035,4 +1084,276 @@ InputDecoration _inputDec({
     ),
     labelStyle: const TextStyle(color: AppTheme.textSecondary),
   );
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// Package Booking Dialog  — book an appointment from an active package session
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _PackageBookingDialog extends StatefulWidget {
+  final String clientId;
+  final String clientPackageId;
+  final String serviceId;
+  final String serviceName;
+  final String packageName;
+  final int remainingSessions;
+
+  const _PackageBookingDialog({
+    required this.clientId,
+    required this.clientPackageId,
+    required this.serviceId,
+    required this.serviceName,
+    required this.packageName,
+    required this.remainingSessions,
+  });
+
+  @override
+  State<_PackageBookingDialog> createState() => _PackageBookingDialogState();
+}
+
+class _PackageBookingDialogState extends State<_PackageBookingDialog> {
+  DateTime? _selectedDate;
+  String? _selectedTime;
+  List<String> _slots = [];
+  bool _loadingSlots = false;
+  bool _submitting = false;
+  String? _error;
+
+  Future<void> _loadSlots(DateTime date) async {
+    setState(() {
+      _loadingSlots = true;
+      _slots = [];
+      _selectedTime = null;
+      _error = null;
+    });
+    try {
+      final dateStr =
+          '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+      final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('getAvailableSlots');
+      final result = await callable
+          .call<Map<String, dynamic>>({'date': dateStr, 'serviceId': widget.serviceId});
+      final raw = result.data['slots'] as List? ?? [];
+      if (mounted) setState(() { _slots = raw.cast<String>(); _loadingSlots = false; });
+    } catch (e) {
+      if (mounted) setState(() { _loadingSlots = false; _error = 'Error al cargar horarios.'; });
+    }
+  }
+
+  Future<void> _submit() async {
+    if (_selectedDate == null || _selectedTime == null) return;
+    setState(() { _submitting = true; _error = null; });
+    try {
+      final date = _selectedDate!;
+      final dateStr =
+          '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+      final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('createPackageAppointment');
+      await callable.call<Map<String, dynamic>>({
+        'clientId': widget.clientId,
+        'clientPackageId': widget.clientPackageId,
+        'serviceId': widget.serviceId,
+        'serviceName': widget.serviceName,
+        'date': dateStr,
+        'time': _selectedTime,
+      });
+      if (mounted) Navigator.of(context).pop(true);
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) setState(() { _submitting = false; _error = e.message ?? 'Error al agendar.'; });
+    } catch (e) {
+      if (mounted) setState(() { _submitting = false; _error = e.toString(); });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 500, maxHeight: 620),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Header
+              Row(children: [
+                const Icon(Icons.card_giftcard_outlined, color: AppTheme.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Agendar sesión del paquete',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 16,
+                              color: AppTheme.primaryDark)),
+                      Text('${widget.serviceName} · ${widget.packageName}',
+                          style: const TextStyle(
+                              color: AppTheme.textSecondary, fontSize: 12)),
+                    ],
+                  ),
+                ),
+                IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close, size: 20)),
+              ]),
+              const Divider(height: 20),
+
+              // Scrollable body
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Sessions remaining badge
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryLight.withValues(alpha: 0.25),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '${widget.remainingSessions} sesión${widget.remainingSessions == 1 ? '' : 'es'} disponible${widget.remainingSessions == 1 ? '' : 's'}',
+                          style: const TextStyle(
+                              fontSize: 13,
+                              color: AppTheme.primaryDark,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Date picker
+                      const Text('Selecciona una fecha',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 14,
+                              color: AppTheme.textPrimary)),
+                      const SizedBox(height: 4),
+                      CalendarDatePicker(
+                        initialDate: _selectedDate ?? now,
+                        firstDate: now,
+                        lastDate: now.add(const Duration(days: 60)),
+                        onDateChanged: (date) {
+                          setState(() => _selectedDate = date);
+                          _loadSlots(date);
+                        },
+                      ),
+
+                      // Time slots
+                      if (_selectedDate != null) ...[
+                        const SizedBox(height: 8),
+                        const Text('Horarios disponibles',
+                            style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 14,
+                                color: AppTheme.textPrimary)),
+                        const SizedBox(height: 8),
+                        if (_loadingSlots)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 12),
+                            child: Center(
+                                child: CircularProgressIndicator(
+                                    color: AppTheme.primary, strokeWidth: 2)),
+                          )
+                        else if (_slots.isEmpty)
+                          const Text(
+                              'No hay horarios disponibles para este día.',
+                              style: TextStyle(
+                                  color: AppTheme.textSecondary, fontSize: 13))
+                        else
+                          _TimeSlotGrid(
+                            slots: _slots,
+                            selected: _selectedTime,
+                            onSelected: (t) => setState(() => _selectedTime = t),
+                          ),
+                      ],
+
+                      if (_error != null) ...[
+                        const SizedBox(height: 8),
+                        Text(_error!,
+                            style: const TextStyle(
+                                color: AppTheme.error, fontSize: 13)),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: (_selectedDate != null &&
+                        _selectedTime != null &&
+                        !_submitting)
+                    ? _submit
+                    : null,
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTheme.primary,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+                child: _submitting
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : const Text('Confirmar cita',
+                        style: TextStyle(fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Time slot grid (chips)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _TimeSlotGrid extends StatelessWidget {
+  final List<String> slots;
+  final String? selected;
+  final void Function(String) onSelected;
+
+  const _TimeSlotGrid(
+      {required this.slots, required this.selected, required this.onSelected});
+
+  String _fmt(String t) {
+    try {
+      final parts = t.split(':');
+      final h = int.parse(parts[0]);
+      final m = int.parse(parts[1]);
+      final period = h >= 12 ? 'PM' : 'AM';
+      final h12 = h % 12 == 0 ? 12 : h % 12;
+      return '$h12:${m.toString().padLeft(2, '0')} $period';
+    } catch (_) {
+      return t;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: slots.map((t) {
+        final isSelected = t == selected;
+        return ChoiceChip(
+          label: Text(_fmt(t)),
+          selected: isSelected,
+          onSelected: (_) => onSelected(t),
+          selectedColor: AppTheme.primary,
+          labelStyle: TextStyle(
+            color: isSelected ? Colors.white : AppTheme.textPrimary,
+            fontSize: 13,
+          ),
+        );
+      }).toList(),
+    );
+  }
 }

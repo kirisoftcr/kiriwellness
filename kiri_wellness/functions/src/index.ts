@@ -14,4 +14,5 @@ export { getAppointmentsByToken } from "./booking/get_appointments_by_token";
 export { lookupClientByEmail, sendVerificationCode, verifyClientCode, cancelAppointmentByClient, confirmAppointmentByClient } from "./booking/client_portal";
 export { getSettings, updateSettings, updateAppointmentStatus } from "./services/admin_crud";
 export { getLoyaltySettings, updateLoyaltySettings, redeemLoyaltyReward } from "./loyalty/loyalty_crud";
-export { createPackage, updatePackage, deletePackage, assignPackageToClient, getClientPackages } from "./packages/packages_crud";
+export { createPackage, updatePackage, deletePackage, assignPackageToClient, getClientPackages, createPackageAppointment, requestPackage, approveClientPackage, rejectClientPackage } from "./packages/packages_crud";
+export { getMyAppointments } from "./booking/client_portal";

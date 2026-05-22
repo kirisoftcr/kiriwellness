@@ -290,3 +290,25 @@ export const confirmAppointmentByClient = onCall(
     return { success: true };
   }
 );
+
+// ---------------------------------------------------------------------------
+// getMyAppointments — fetch appointments by clientId (used after OTP auth)
+// ---------------------------------------------------------------------------
+
+export const getMyAppointments = onCall(
+  { region: "us-central1", invoker: "public", enforceAppCheck: false },
+  async (request) => {
+    const { clientId } = request.data as { clientId: string };
+    if (!clientId) throw new HttpsError("invalid-argument", "clientId requerido.");
+
+    const aptsSnap = await db()
+      .collection("appointments")
+      .where("clientId", "==", clientId)
+      .orderBy("date", "desc")
+      .orderBy("time", "desc")
+      .get();
+
+    const appointments = aptsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    return { appointments };
+  }
+);

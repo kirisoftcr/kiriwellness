@@ -123,7 +123,7 @@ class ClientPackageService {
 // ClientPackageModel — package assigned to a specific client
 // ─────────────────────────────────────────────────────────────────────────────
 
-enum ClientPackageStatus { active, completed, expired }
+enum ClientPackageStatus { active, completed, expired, pending, rejected }
 
 class ClientPackageModel {
   final String id;
@@ -137,6 +137,12 @@ class ClientPackageModel {
   final DateTime purchasedAt;
   final DateTime expiresAt;
   final ClientPackageStatus status;
+  final String requestNotes;
+  final String rejectReason;
+  final String clientFirstName;
+  final String clientLastName;
+  final String clientEmail;
+  final String clientPhone;
 
   const ClientPackageModel({
     required this.id,
@@ -150,6 +156,12 @@ class ClientPackageModel {
     required this.purchasedAt,
     required this.expiresAt,
     this.status = ClientPackageStatus.active,
+    this.requestNotes = '',
+    this.rejectReason = '',
+    this.clientFirstName = '',
+    this.clientLastName = '',
+    this.clientEmail = '',
+    this.clientPhone = '',
   });
 
   int get remainingSessions => totalSessions - usedSessions;
@@ -164,6 +176,10 @@ class ClientPackageModel {
           return ClientPackageStatus.completed;
         case 'expired':
           return ClientPackageStatus.expired;
+        case 'pending':
+          return ClientPackageStatus.pending;
+        case 'rejected':
+          return ClientPackageStatus.rejected;
         default:
           return ClientPackageStatus.active;
       }
@@ -183,6 +199,12 @@ class ClientPackageModel {
       purchasedAt: (data['purchasedAt'] as Timestamp).toDate(),
       expiresAt: (data['expiresAt'] as Timestamp).toDate(),
       status: parseStatus(data['status'] as String?),
+      requestNotes: data['requestNotes'] as String? ?? '',
+      rejectReason: data['rejectReason'] as String? ?? '',
+      clientFirstName: data['clientFirstName'] as String? ?? '',
+      clientLastName: data['clientLastName'] as String? ?? '',
+      clientEmail: data['clientEmail'] as String? ?? '',
+      clientPhone: data['clientPhone'] as String? ?? '',
     );
   }
 

@@ -450,6 +450,7 @@ class _ClientFormDialogState extends ConsumerState<_ClientFormDialog> {
   late final TextEditingController _phoneCtrl;
   late final TextEditingController _emailCtrl;
   late final TextEditingController _notesCtrl;
+  late final TextEditingController _completedCtrl;
   bool _loading = false;
   String? _error;
 
@@ -464,6 +465,7 @@ class _ClientFormDialogState extends ConsumerState<_ClientFormDialog> {
     _phoneCtrl = TextEditingController(text: c?.phone ?? '');
     _emailCtrl = TextEditingController(text: c?.email ?? '');
     _notesCtrl = TextEditingController(text: c?.notes ?? '');
+    _completedCtrl = TextEditingController(text: c?.completedAppointments.toString() ?? '0');
   }
 
   @override
@@ -473,6 +475,7 @@ class _ClientFormDialogState extends ConsumerState<_ClientFormDialog> {
     _phoneCtrl.dispose();
     _emailCtrl.dispose();
     _notesCtrl.dispose();
+    _completedCtrl.dispose();
     super.dispose();
   }
 
@@ -496,6 +499,7 @@ class _ClientFormDialogState extends ConsumerState<_ClientFormDialog> {
           'notes': _notesCtrl.text.trim().isEmpty
               ? null
               : _notesCtrl.text.trim(),
+          'completedAppointments': int.tryParse(_completedCtrl.text.trim()) ?? widget.client!.completedAppointments,
         });
       } else {
         await repo.create(
@@ -584,6 +588,14 @@ class _ClientFormDialogState extends ConsumerState<_ClientFormDialog> {
                 label: 'Notas',
                 maxLines: 3,
               ),
+              if (_isEdit) ...[  
+                const SizedBox(height: 12),
+                _Field(
+                  controller: _completedCtrl,
+                  label: 'Citas completadas',
+                  keyboard: TextInputType.number,
+                ),
+              ],
             ],
           ),
         ),
@@ -627,6 +639,7 @@ class _NewAppointmentDialogState
   DateTime? _selectedDate;
   String? _selectedTime;
   final _notesCtrl = TextEditingController();
+  bool _confirmDirectly = false;
 
   bool _loadingSlots = false;
   List<String> _slots = [];
@@ -714,6 +727,7 @@ class _NewAppointmentDialogState
             date: dateStr,
             time: _selectedTime!,
             notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
+            confirmDirectly: _confirmDirectly,
           );
       if (mounted) {
         Navigator.pop(context);
@@ -862,6 +876,20 @@ class _NewAppointmentDialogState
                 controller: _notesCtrl,
                 maxLines: 3,
                 decoration: const InputDecoration(labelText: 'Notas (opcional)'),
+              ),
+              const SizedBox(height: 8),
+              CheckboxListTile(
+                value: _confirmDirectly,
+                onChanged: (v) => setState(() => _confirmDirectly = v ?? false),
+                title: const Text('Confirmar cita directamente',
+                    style: TextStyle(fontSize: 13)),
+                subtitle: const Text(
+                    'La cita quedará confirmada sin necesidad de email de confirmación',
+                    style: TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
+                controlAffinity: ListTileControlAffinity.leading,
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                activeColor: AppTheme.primary,
               ),
             ],
           ),

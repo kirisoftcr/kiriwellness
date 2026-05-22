@@ -286,6 +286,20 @@ class _Header extends StatelessWidget {
             ],
           ),
           Positioned(
+            left: 0,
+            bottom: 0,
+            child: TextButton.icon(
+              onPressed: () => context.go('/'),
+              icon: const Icon(Icons.arrow_back, size: 16),
+              label: Text(isWide ? 'Volver al inicio' : 'Inicio',
+                  style: const TextStyle(fontSize: 13)),
+              style: TextButton.styleFrom(
+                foregroundColor: AppTheme.textSecondary,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              ),
+            ),
+          ),
+          Positioned(
             right: 0,
             bottom: 0,
             child: TextButton.icon(

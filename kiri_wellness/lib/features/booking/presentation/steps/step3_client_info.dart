@@ -20,12 +20,15 @@ class _Step3ClientInfoState extends ConsumerState<Step3ClientInfo> {
   late final TextEditingController _emailCtrl;
   late final TextEditingController _notesCtrl;
   bool _submitting = false;
+  bool _confirmDirectly = false;
 
   // Email lookup state
   final _emailLookupCtrl = TextEditingController();
   bool _lookingUp = false;
   bool _lookupDone = false;
   bool _isReturningClient = false;
+  String _foundClientId = '';
+  List<Map<String, dynamic>> _matchingPackages = [];
 
   @override
   void initState() {
@@ -68,7 +71,13 @@ class _Step3ClientInfoState extends ConsumerState<Step3ClientInfo> {
         _lastNameCtrl.text = data['lastName'] as String? ?? '';
         _phoneCtrl.text = data['phone'] as String? ?? '';
         _emailCtrl.text = email;
+        _foundClientId = data['clientId'] as String? ?? '';
         setState(() => _isReturningClient = true);
+        // Async check for package sessions matching the selected service
+        final serviceId = ref.read(bookingProvider).selectedService?.id ?? '';
+        if (_foundClientId.isNotEmpty && serviceId.isNotEmpty) {
+          _checkPackageSessions(_foundClientId, serviceId);
+        }
       } else {
         _emailCtrl.text = email;
         setState(() => _isReturningClient = false);
@@ -78,6 +87,52 @@ class _Step3ClientInfoState extends ConsumerState<Step3ClientInfo> {
       _emailCtrl.text = email;
     } finally {
       if (mounted) setState(() { _lookingUp = false; _lookupDone = true; });
+    }
+  }
+
+  Future<void> _checkPackageSessions(String clientId, String serviceId) async {
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('getClientPackages');
+      final result =
+          await callable.call<Map<String, dynamic>>({'clientId': clientId});
+      final raw = result.data['packages'] as List? ?? [];
+      final pkgs = raw.cast<Map<String, dynamic>>();
+      final matching = pkgs.where((p) {
+        if (p['status'] != 'active') return false;
+        final services = p['services'] as List<dynamic>? ?? [];
+        return services.any((s) {
+          final svc = s as Map<String, dynamic>;
+          final remaining =
+              (svc['totalSessions'] as num? ?? 0).toInt() -
+                  (svc['usedSessions'] as num? ?? 0).toInt();
+          return svc['serviceId'] == serviceId && remaining > 0;
+        });
+      }).toList();
+      if (mounted) setState(() => _matchingPackages = matching);
+    } catch (_) {}
+  }
+
+  Future<void> _showPackageBookingDialog() async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _PackageOtpBookingDialog(
+        email: _emailLookupCtrl.text.trim(),
+        packages: _matchingPackages,
+        serviceId: ref.read(bookingProvider).selectedService?.id ?? '',
+      ),
+    );
+    if (result != null && mounted) {
+      ref.read(bookingProvider.notifier).submitWithClient(
+        clientCode: result['clientCode'] as String,
+        clientId: result['clientId'] as String,
+        firstName: result['firstName'] as String,
+        lastName: result['lastName'] as String,
+        phone: result['phone'] as String,
+        email: result['email'] as String,
+        notes: '',
+      );
     }
   }
 
@@ -110,6 +165,7 @@ class _Step3ClientInfoState extends ConsumerState<Step3ClientInfo> {
         'date': dateStr,
         'time': timeStr,
         'notes': _notesCtrl.text.trim(),
+        if (_confirmDirectly) 'confirmDirectly': true,
       });
 
       final data = result.data;
@@ -273,6 +329,68 @@ class _Step3ClientInfoState extends ConsumerState<Step3ClientInfo> {
                 ],
               ),
             ),
+
+          // Package offer card — shown when client has sessions for this service
+          if (_matchingPackages.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3EFF9),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.primary.withValues(alpha: 0.4)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(children: [
+                    Icon(Icons.card_giftcard_outlined,
+                        color: AppTheme.primary, size: 18),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '¡Tienes sesiones disponibles en tus paquetes!',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                            color: AppTheme.primaryDark),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Puedes usar una sesión de tu paquete para esta cita en lugar de pagar individualmente.',
+                    style: const TextStyle(
+                        fontSize: 12, color: AppTheme.textSecondary),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _showPackageBookingDialog,
+                      icon: const Icon(Icons.card_giftcard_outlined, size: 16),
+                      label: const Text('Usar sesión del paquete'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppTheme.primary,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        textStyle: const TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w600),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'O continúa para reservar como cita normal.',
+                    style:
+                        TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+
           const SizedBox(height: 8),
 
           // Form fields — name + lastName side by side on wide
@@ -306,7 +424,21 @@ class _Step3ClientInfoState extends ConsumerState<Step3ClientInfo> {
             '* Recibirás la confirmación por WhatsApp o correo electrónico.',
             style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
           ),
-          const SizedBox(height: 28),
+          const SizedBox(height: 12),
+          CheckboxListTile(
+            value: _confirmDirectly,
+            onChanged: (v) => setState(() => _confirmDirectly = v ?? false),
+            title: const Text('Confirmar cita directamente',
+                style: TextStyle(fontSize: 13)),
+            subtitle: const Text(
+                'Tu cita quedará confirmada de inmediato sin paso adicional',
+                style: TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
+            controlAffinity: ListTileControlAffinity.leading,
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            activeColor: AppTheme.primary,
+          ),
+          const SizedBox(height: 16),
 
           Row(
             children: [
@@ -527,6 +659,327 @@ class _SummaryRow extends StatelessWidget {
               style: const TextStyle(fontSize: 14, color: AppTheme.textPrimary)),
         ),
       ],
+    );
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// Package OTP Booking Dialog
+// Sends OTP → verifies → books appointment from package → returns client data
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum _PkgOtpPhase { sending, verify, booking }
+
+class _PackageOtpBookingDialog extends ConsumerStatefulWidget {
+  final String email;
+  final List<Map<String, dynamic>> packages;
+  final String serviceId;
+
+  const _PackageOtpBookingDialog({
+    required this.email,
+    required this.packages,
+    required this.serviceId,
+  });
+
+  @override
+  ConsumerState<_PackageOtpBookingDialog> createState() =>
+      _PackageOtpBookingDialogState();
+}
+
+class _PackageOtpBookingDialogState
+    extends ConsumerState<_PackageOtpBookingDialog> {
+  _PkgOtpPhase _phase = _PkgOtpPhase.sending;
+  final _otpCtrl = TextEditingController();
+  late Map<String, dynamic> _selectedPackage;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedPackage = widget.packages.first;
+    _sendOtp();
+  }
+
+  @override
+  void dispose() {
+    _otpCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _sendOtp() async {
+    setState(() { _phase = _PkgOtpPhase.sending; _error = null; });
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('sendVerificationCode');
+      await callable.call({'email': widget.email});
+      if (mounted) setState(() => _phase = _PkgOtpPhase.verify);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = 'Error al enviar código. Intenta de nuevo.';
+          _phase = _PkgOtpPhase.verify;
+        });
+      }
+    }
+  }
+
+  Future<void> _verify() async {
+    final code = _otpCtrl.text.trim();
+    if (code.length != 6) return;
+    setState(() { _phase = _PkgOtpPhase.booking; _error = null; });
+    try {
+      // Step 1: Verify OTP → get confirmed clientId
+      final verifyCallable = FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('verifyClientCode');
+      final verifyResult = await verifyCallable.call<Map<String, dynamic>>(
+          {'email': widget.email, 'code': code});
+      final clientId = verifyResult.data['clientId'] as String;
+      final clientData =
+          verifyResult.data['client'] as Map<String, dynamic>? ?? {};
+
+      // Step 2: Find service entry in selected package
+      final services =
+          (_selectedPackage['services'] as List<dynamic>? ?? [])
+              .cast<Map<String, dynamic>>();
+      final svcEntry = services.firstWhere(
+        (s) => s['serviceId'] == widget.serviceId,
+        orElse: () => {},
+      );
+
+      // Step 3: Get booking date/time from booking provider
+      final booking = ref.read(bookingProvider);
+      final date = booking.selectedDate!;
+      final time = booking.selectedTime!;
+      final dateStr =
+          '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+      final timeStr =
+          '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+
+      // Step 4: Create appointment from package
+      final bookCallable = FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('createPackageAppointment');
+      await bookCallable.call<Map<String, dynamic>>({
+        'clientId': clientId,
+        'clientPackageId': _selectedPackage['id'] as String,
+        'serviceId': widget.serviceId,
+        'serviceName': svcEntry.isNotEmpty
+            ? svcEntry['serviceName'] as String? ?? booking.selectedService!.name
+            : booking.selectedService!.name,
+        'date': dateStr,
+        'time': timeStr,
+        'notes': '',
+      });
+
+      if (mounted) {
+        Navigator.of(context).pop({
+          'clientCode': clientData['clientCode'] as String? ?? '',
+          'clientId': clientId,
+          'firstName': clientData['firstName'] as String? ?? '',
+          'lastName': clientData['lastName'] as String? ?? '',
+          'phone': clientData['phone'] as String? ?? '',
+          'email': widget.email,
+        });
+      }
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.message ?? 'Error al procesar. Intenta de nuevo.';
+          _phase = _PkgOtpPhase.verify;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() { _error = e.toString(); _phase = _PkgOtpPhase.verify; });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isBusy =
+        _phase == _PkgOtpPhase.sending || _phase == _PkgOtpPhase.booking;
+
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Header
+              Row(children: [
+                const Icon(Icons.card_giftcard_outlined, color: AppTheme.primary),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text('Usar sesión del paquete',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
+                          color: AppTheme.primaryDark)),
+                ),
+                if (!isBusy)
+                  IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close, size: 20)),
+              ]),
+              const Divider(height: 20),
+
+              // Package selector (if multiple)
+              if (widget.packages.length > 1) ...[
+                const Text('Selecciona el paquete:',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.textPrimary)),
+                const SizedBox(height: 8),
+                ...widget.packages.map((p) {
+                  final isSelected = p['id'] == _selectedPackage['id'];
+                  return RadioListTile<String>(
+                    value: p['id'] as String,
+                    groupValue: _selectedPackage['id'] as String,
+                    onChanged: isBusy
+                        ? null
+                        : (v) => setState(() => _selectedPackage =
+                            widget.packages.firstWhere((x) => x['id'] == v)),
+                    title: Text(p['packageName'] as String? ?? '',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: isSelected
+                                ? AppTheme.primaryDark
+                                : AppTheme.textPrimary,
+                            fontSize: 13)),
+                    activeColor: AppTheme.primary,
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                  );
+                }),
+                const SizedBox(height: 8),
+              ] else ...[
+                // Single package info
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryLight.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(children: [
+                    const Icon(Icons.inventory_2_outlined,
+                        color: AppTheme.primary, size: 16),
+                    const SizedBox(width: 8),
+                    Text(_selectedPackage['packageName'] as String? ?? '',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                            color: AppTheme.primaryDark)),
+                  ]),
+                ),
+                const SizedBox(height: 12),
+              ],
+
+              // OTP section
+              if (_phase == _PkgOtpPhase.sending)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  child: Column(children: [
+                    CircularProgressIndicator(
+                        color: AppTheme.primary, strokeWidth: 2),
+                    SizedBox(height: 12),
+                    Text('Enviando código de verificación...',
+                        style: TextStyle(
+                            color: AppTheme.textSecondary, fontSize: 13),
+                        textAlign: TextAlign.center),
+                  ]),
+                )
+              else if (_phase == _PkgOtpPhase.booking)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  child: Column(children: [
+                    CircularProgressIndicator(
+                        color: AppTheme.primary, strokeWidth: 2),
+                    SizedBox(height: 12),
+                    Text('Agendando tu cita...',
+                        style: TextStyle(
+                            color: AppTheme.textSecondary, fontSize: 13),
+                        textAlign: TextAlign.center),
+                  ]),
+                )
+              else ...[
+                RichText(
+                  textAlign: TextAlign.center,
+                  text: TextSpan(
+                    style: const TextStyle(
+                        color: AppTheme.textSecondary, fontSize: 13),
+                    children: [
+                      const TextSpan(text: 'Enviamos un código de 6 dígitos a '),
+                      TextSpan(
+                          text: widget.email,
+                          style: const TextStyle(
+                              color: AppTheme.primaryDark,
+                              fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _otpCtrl,
+                  keyboardType: TextInputType.number,
+                  maxLength: 6,
+                  autofocus: true,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 28,
+                      letterSpacing: 10,
+                      fontWeight: FontWeight.w700),
+                  decoration: InputDecoration(
+                    labelText: 'Código',
+                    hintText: '123456',
+                    prefixIcon: const Icon(Icons.pin_outlined,
+                        color: AppTheme.primary, size: 20),
+                    filled: true,
+                    fillColor: AppTheme.surface,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide:
+                          const BorderSide(color: AppTheme.primary, width: 2),
+                    ),
+                  ),
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 8),
+                  Text(_error!,
+                      style: const TextStyle(
+                          color: AppTheme.error, fontSize: 13),
+                      textAlign: TextAlign.center),
+                ],
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: _verify,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTheme.primary,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text('Verificar y agendar',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: _sendOtp,
+                  child: const Text('Reenviar código',
+                      style: TextStyle(
+                          color: AppTheme.textSecondary, fontSize: 13)),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

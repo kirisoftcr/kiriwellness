@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 import '../../../data/repositories/appointment_repository.dart';
 import '../../../data/repositories/client_repository.dart';
 import '../../../data/repositories/package_repository.dart';
@@ -8,6 +9,9 @@ import '../../../shared/models/appointment_model.dart';
 import '../../../shared/widgets/stat_card.dart';
 import '../../../shared/widgets/section_header.dart';
 import '../../../core/theme/app_theme.dart';
+
+String _fmtColones(double v) =>
+    NumberFormat('#,##0', 'es_CR').format(v).replaceAll(',', '.');
 
 String _todayStr() {
   final now = DateTime.now();
@@ -112,7 +116,7 @@ class _StatsGrid extends ConsumerWidget {
           title: 'Ingresos Mes',
           value: allAsync.isLoading
               ? '...'
-              : '\$${monthRevenue.toStringAsFixed(0)}',
+              : '₡${_fmtColones(monthRevenue)}',
           icon: Icons.attach_money,
           color: AppTheme.success,
           subtitle: monthPrefix.replaceAll('-', '/'),
@@ -323,6 +327,11 @@ class _QuickActions extends StatelessWidget {
                 label: 'Horarios',
                 color: AppTheme.primaryDark,
                 onTap: () => context.go('/schedule')),
+            _QuickActionButton(
+                icon: Icons.bar_chart_outlined,
+                label: 'Reportes',
+                color: AppTheme.success,
+                onTap: () => context.go('/reports')),
           ],
         ),
       ],

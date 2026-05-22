@@ -18,6 +18,7 @@ interface CreateBookingRequest {
   date: string; // "YYYY-MM-DD"
   time: string; // "HH:mm"
   notes?: string;
+  confirmDirectly?: boolean;
 }
 
 interface CreateBookingResponse {
@@ -149,7 +150,7 @@ export const createBooking = onCall<CreateBookingRequest>(
       date: data.date,
       time: data.time,
       notes: data.notes ?? "",
-      status: "requested",
+      status: data.confirmDirectly === true ? "confirmed" : "requested",
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });

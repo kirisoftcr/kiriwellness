@@ -79,6 +79,36 @@ class PackageRepository {
     return result.data['id'] as String;
   }
 
+  Future<String> requestPackage({
+    required String packageId,
+    required String firstName,
+    required String lastName,
+    required String email,
+    required String phone,
+    String notes = '',
+  }) async {
+    final callable = _functions.httpsCallable('requestPackage');
+    final result = await callable.call({
+      'packageId': packageId,
+      'firstName': firstName,
+      'lastName': lastName,
+      'email': email,
+      'phone': phone,
+      'notes': notes,
+    });
+    return result.data['id'] as String;
+  }
+
+  Future<void> approveClientPackage(String clientPackageId) async {
+    final callable = _functions.httpsCallable('approveClientPackage');
+    await callable.call({'clientPackageId': clientPackageId});
+  }
+
+  Future<void> rejectClientPackage(String clientPackageId, {String reason = ''}) async {
+    final callable = _functions.httpsCallable('rejectClientPackage');
+    await callable.call({'clientPackageId': clientPackageId, 'reason': reason});
+  }
+
   Stream<List<ClientPackageModel>> watchAllActiveClientPackages() {
     final now = Timestamp.now();
     return _clientPackagesCol
@@ -88,6 +118,14 @@ class PackageRepository {
             .map(ClientPackageModel.fromFirestore)
             .where((cp) => cp.remainingSessions > 0)
             .toList());
+  }
+
+  Stream<List<ClientPackageModel>> watchPendingClientPackages() {
+    return _clientPackagesCol
+        .where('status', isEqualTo: 'pending')
+        .orderBy('purchasedAt', descending: true)
+        .snapshots()
+        .map((s) => s.docs.map(ClientPackageModel.fromFirestore).toList());
   }
 }
 
@@ -111,4 +149,9 @@ final clientPackagesStreamProvider =
 final allActiveClientPackagesStreamProvider =
     StreamProvider<List<ClientPackageModel>>((ref) {
   return ref.watch(packageRepositoryProvider).watchAllActiveClientPackages();
+});
+
+final pendingClientPackagesStreamProvider =
+    StreamProvider<List<ClientPackageModel>>((ref) {
+  return ref.watch(packageRepositoryProvider).watchPendingClientPackages();
 });

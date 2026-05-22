@@ -80,6 +80,7 @@ class AppointmentRepository {
     required String date,
     required String time,
     String? notes,
+    bool confirmDirectly = false,
   }) async {
     final result = await _functions.httpsCallable('createBooking').call({
       'firstName': firstName,
@@ -93,6 +94,7 @@ class AppointmentRepository {
       'date': date,
       'time': time,
       if (notes != null && notes.isNotEmpty) 'notes': notes,
+      if (confirmDirectly) 'confirmDirectly': true,
     });
     return Map<String, dynamic>.from(result.data as Map);
   }

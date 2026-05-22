@@ -1,6 +1,7 @@
 // ignore: avoid_web_libraries_in_flutter
 import 'dart:html' as html;
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -491,6 +492,25 @@ class _PackageLandingCard extends StatelessWidget {
             if (pkg.validityDays > 0)
               _Chip(icon: Icons.calendar_today_outlined, label: '${pkg.validityDays} días'),
           ]),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: () => showDialog(
+                context: context,
+                builder: (_) => _RequestPackageDialog(pkg: pkg),
+              ),
+              style: FilledButton.styleFrom(
+                backgroundColor: _kLavender,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+                textStyle: GoogleFonts.lato(
+                    fontSize: 14, fontWeight: FontWeight.w700),
+              ),
+              child: const Text('Adquirir paquete'),
+            ),
+          ),
         ],
       ),
     );
@@ -829,4 +849,399 @@ class _LeafPatternPainter extends CustomPainter {
   }
 
   @override  bool shouldRepaint(_) => false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Request Package Dialog — public form for clients to request a package
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _RequestPackageDialog extends StatefulWidget {
+  final PackageModel pkg;
+  const _RequestPackageDialog({required this.pkg});
+
+  @override
+  State<_RequestPackageDialog> createState() => _RequestPackageDialogState();
+}
+
+enum _ReqPhase { emailLookup, form, loading, success }
+
+class _RequestPackageDialogState extends State<_RequestPackageDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _emailLookupCtrl = TextEditingController();
+  final _nameCtrl = TextEditingController();
+  final _lastNameCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+  final _notesCtrl = TextEditingController();
+  _ReqPhase _phase = _ReqPhase.emailLookup;
+  bool _lookingUp = false;
+  bool _isReturningClient = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _emailLookupCtrl.dispose();
+    _nameCtrl.dispose();
+    _lastNameCtrl.dispose();
+    _phoneCtrl.dispose();
+    _notesCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _lookupEmail() async {
+    final email = _emailLookupCtrl.text.trim();
+    if (email.isEmpty || !email.contains('@')) {
+      setState(() => _error = 'Ingresa un correo válido');
+      return;
+    }
+    setState(() { _lookingUp = true; _error = null; });
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('lookupClientByEmail');
+      final result = await callable.call({'email': email});
+      final data = Map<String, dynamic>.from(result.data as Map);
+      if (data['found'] == true) {
+        _nameCtrl.text = data['firstName'] ?? '';
+        _lastNameCtrl.text = data['lastName'] ?? '';
+        _phoneCtrl.text = data['phone'] ?? '';
+        setState(() { _isReturningClient = true; });
+      } else {
+        setState(() { _isReturningClient = false; });
+      }
+    } catch (_) {
+      setState(() { _isReturningClient = false; });
+    } finally {
+      if (mounted) setState(() { _lookingUp = false; _phase = _ReqPhase.form; });
+    }
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() { _phase = _ReqPhase.loading; _error = null; });
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('requestPackage');
+      await callable.call({
+        'packageId': widget.pkg.id,
+        'firstName': _nameCtrl.text.trim(),
+        'lastName': _lastNameCtrl.text.trim(),
+        'email': _emailLookupCtrl.text.trim(),
+        'phone': _phoneCtrl.text.trim(),
+        'notes': _notesCtrl.text.trim(),
+      });
+      if (mounted) setState(() => _phase = _ReqPhase.success);
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) setState(() { _phase = _ReqPhase.form; _error = e.message; });
+    } catch (e) {
+      if (mounted) setState(() { _phase = _ReqPhase.form; _error = e.toString(); });
+    }
+  }
+
+  InputDecoration _dec(String label, String hint, IconData icon) =>
+      InputDecoration(
+        labelText: label,
+        hintText: hint,
+        prefixIcon: Icon(icon, color: _kLavender, size: 20),
+        filled: true,
+        fillColor: Colors.white,
+        border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: _kLavLight)),
+        enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: _kLavLight)),
+        focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: _kLavender, width: 2)),
+        labelStyle: TextStyle(color: _kTaupe),
+      );
+
+  Widget _buildHeader() => Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Row(children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: _kLavender.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: const Icon(Icons.card_giftcard_outlined,
+              color: _kLavender, size: 22),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Adquirir paquete',
+                    style: GoogleFonts.cormorantGaramond(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: _kOlive)),
+                Text(widget.pkg.name,
+                    style: GoogleFonts.lato(
+                        fontSize: 13, color: _kTaupe)),
+              ]),
+        ),
+        IconButton(
+            onPressed: () => Navigator.of(context).pop(),
+            icon: Icon(Icons.close, color: _kTaupe, size: 20)),
+      ]),
+      const SizedBox(height: 4),
+      Divider(color: _kLavLight.withValues(alpha: 0.5)),
+      const SizedBox(height: 8),
+    ],
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      backgroundColor: const Color(0xFFFAF8F4),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480, maxHeight: 640),
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: _phase == _ReqPhase.success
+              ? _SuccessView(pkg: widget.pkg, onClose: () => Navigator.of(context).pop())
+              : _phase == _ReqPhase.emailLookup
+                  ? _buildEmailLookupStep()
+                  : _buildFormStep(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmailLookupStep() => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      _buildHeader(),
+      Text(
+        'Ingresa tu correo electrónico para continuar',
+        style: GoogleFonts.lato(fontSize: 14, color: _kTaupe, height: 1.5),
+      ),
+      const SizedBox(height: 16),
+      TextField(
+        controller: _emailLookupCtrl,
+        keyboardType: TextInputType.emailAddress,
+        autofocus: true,
+        onSubmitted: (_) => _lookupEmail(),
+        decoration: _dec('Correo electrónico', 'tu@correo.com', Icons.email_outlined),
+      ),
+      if (_error != null) ...[
+        const SizedBox(height: 8),
+        Text(_error!,
+            style: GoogleFonts.lato(color: Colors.red.shade700, fontSize: 13),
+            textAlign: TextAlign.center),
+      ],
+      const SizedBox(height: 20),
+      FilledButton(
+        onPressed: _lookingUp ? null : _lookupEmail,
+        style: FilledButton.styleFrom(
+          backgroundColor: _kLavender,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        child: _lookingUp
+            ? const SizedBox(
+                width: 20, height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+            : Text('Continuar',
+                style: GoogleFonts.lato(fontWeight: FontWeight.w700, fontSize: 15)),
+      ),
+    ],
+  );
+
+  Widget _buildFormStep() => Form(
+    key: _formKey,
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildHeader(),
+
+        // Returning client banner
+        if (_isReturningClient) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: _kLavender.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _kLavender.withValues(alpha: 0.3)),
+            ),
+            child: Row(children: [
+              Icon(Icons.waving_hand_outlined, size: 16, color: _kLavender),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '¡Bienvenida de vuelta! Encontramos tu información.',
+                  style: GoogleFonts.lato(
+                      fontSize: 12, color: _kLavender, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 12),
+        ],
+
+        // Info notice
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: _kOlive.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(children: [
+            Icon(Icons.info_outline, size: 15, color: _kOlive.withValues(alpha: 0.7)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Tu solicitud será revisada por nuestro equipo. Te notificaremos por correo una vez aprobada.',
+                style: GoogleFonts.lato(fontSize: 12, color: _kOlive, height: 1.5),
+              ),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 16),
+
+        // Scrollable fields
+        Expanded(
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Email (read-only, already captured)
+                InputDecorator(
+                  decoration: _dec('Correo electrónico', '', Icons.email_outlined),
+                  child: Text(_emailLookupCtrl.text.trim(),
+                      style: GoogleFonts.lato(fontSize: 14, color: _kOlive)),
+                ),
+                const SizedBox(height: 12),
+                Row(children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _nameCtrl,
+                      textCapitalization: TextCapitalization.words,
+                      decoration: _dec('Nombre', 'Ej. María', Icons.person_outline),
+                      validator: (v) =>
+                          (v == null || v.trim().isEmpty) ? 'Requerido' : null,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _lastNameCtrl,
+                      textCapitalization: TextCapitalization.words,
+                      decoration: _dec('Apellidos', 'Ej. González', Icons.person_outline),
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _phoneCtrl,
+                  keyboardType: TextInputType.phone,
+                  decoration: _dec('Teléfono / WhatsApp', '+506 8888 8888', Icons.phone_outlined),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'Requerido' : null,
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _notesCtrl,
+                  maxLines: 2,
+                  decoration: _dec('Notas adicionales (opcional)',
+                      'Ej. método de pago, consultas...', Icons.note_outlined),
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 10),
+                  Text(_error!,
+                      style: GoogleFonts.lato(
+                          color: Colors.red.shade700, fontSize: 13),
+                      textAlign: TextAlign.center),
+                ],
+              ],
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 16),
+        Row(children: [
+          TextButton(
+            onPressed: () => setState(() {
+              _phase = _ReqPhase.emailLookup;
+              _error = null;
+            }),
+            child: Text('← Cambiar correo',
+                style: GoogleFonts.lato(color: _kTaupe, fontSize: 13)),
+          ),
+          const Spacer(),
+          FilledButton(
+            onPressed: _phase == _ReqPhase.loading ? null : _submit,
+            style: FilledButton.styleFrom(
+              backgroundColor: _kLavender,
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 24),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: _phase == _ReqPhase.loading
+                ? const SizedBox(
+                    width: 20, height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : Text('Enviar solicitud',
+                    style: GoogleFonts.lato(fontWeight: FontWeight.w700, fontSize: 15)),
+          ),
+        ]),
+      ],
+    ),
+  );
+}
+
+class _SuccessView extends StatelessWidget {
+  final PackageModel pkg;
+  final VoidCallback onClose;
+  const _SuccessView({required this.pkg, required this.onClose});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const SizedBox(height: 16),
+        Container(
+          width: 72,
+          height: 72,
+          decoration: BoxDecoration(
+            color: _kOlive.withValues(alpha: 0.1),
+            shape: BoxShape.circle,
+          ),
+          child:
+              const Icon(Icons.check_circle_outline, color: _kOlive, size: 40),
+        ),
+        const SizedBox(height: 20),
+        Text('¡Solicitud enviada!',
+            style: GoogleFonts.cormorantGaramond(
+                fontSize: 24, fontWeight: FontWeight.w700, color: _kOlive),
+            textAlign: TextAlign.center),
+        const SizedBox(height: 12),
+        Text(
+          'Tu solicitud para el paquete "${pkg.name}" fue recibida. Nuestro equipo la revisará y te notificará por correo electrónico una vez aprobada.',
+          style: GoogleFonts.lato(fontSize: 14, color: _kTaupe, height: 1.6),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 28),
+        FilledButton(
+          onPressed: onClose,
+          style: FilledButton.styleFrom(
+            backgroundColor: _kLavender,
+            padding:
+                const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+          child: Text('Cerrar',
+              style:
+                  GoogleFonts.lato(fontWeight: FontWeight.w700, fontSize: 14)),
+        ),
+      ],
+    );
+  }
 }

@@ -16,6 +16,7 @@ import '../../features/appointments/presentation/my_appointments_screen.dart';
 import '../../features/landing/presentation/landing_screen.dart';
 import '../../features/schedule/presentation/schedule_screen.dart';
 import '../../features/settings/presentation/settings_screen.dart';
+import '../../features/reports/presentation/reports_screen.dart';
 import 'app_shell.dart';
 
 /// A [ChangeNotifier] that notifies GoRouter whenever the auth state changes.
@@ -153,6 +154,12 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/settings',
             pageBuilder: (context, state) => const NoTransitionPage(
               child: SettingsScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/reports',
+            pageBuilder: (context, state) => const NoTransitionPage(
+              child: ReportsScreen(),
             ),
           ),
         ],

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/widgets/section_header.dart';
@@ -34,6 +35,9 @@ class PackagesScreen extends ConsumerWidget {
               ),
             ),
             const SizedBox(height: 24),
+            // ── Pending package requests ──────────────────────────────────
+            _PendingRequestsSection(),
+            const SizedBox(height: 8),
             packagesAsync.when(
               loading: () => const Center(
                   child: Padding(
@@ -617,6 +621,364 @@ class _ServiceLine {
       {required this.serviceId,
       required this.serviceName,
       required this.count});
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pending Package Requests Section
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _PendingRequestsSection extends ConsumerWidget {
+  const _PendingRequestsSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final pendingAsync = ref.watch(pendingClientPackagesStreamProvider);
+
+    return pendingAsync.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (pending) {
+        if (pending.isEmpty) return const SizedBox.shrink();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppTheme.warning.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.pending_outlined,
+                      size: 14, color: AppTheme.warning),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${pending.length} solicitud${pending.length == 1 ? '' : 'es'} pendiente${pending.length == 1 ? '' : 's'}',
+                    style: const TextStyle(
+                        color: AppTheme.warning,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700),
+                  ),
+                ]),
+              ),
+            ]),
+            const SizedBox(height: 12),
+            ...pending.map((cp) => _PendingRequestCard(cp: cp, ref: ref)),
+            const Divider(height: 32),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _PendingRequestCard extends StatefulWidget {
+  final ClientPackageModel cp;
+  final WidgetRef ref;
+  const _PendingRequestCard({required this.cp, required this.ref});
+
+  @override
+  State<_PendingRequestCard> createState() => _PendingRequestCardState();
+}
+
+class _PendingRequestCardState extends State<_PendingRequestCard> {
+  bool _actioning = false;
+  // Fallback client data loaded from `clients` collection when denormalized fields are absent
+  Map<String, String>? _fetchedClient;
+  bool _fetchingClient = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final cp = widget.cp;
+    if (cp.clientFirstName.isEmpty && cp.clientId.isNotEmpty) {
+      _loadClientFallback(cp.clientId);
+    }
+  }
+
+  Future<void> _loadClientFallback(String clientId) async {
+    setState(() => _fetchingClient = true);
+    try {
+      final doc = await FirebaseFirestore.instance.collection('clients').doc(clientId).get();
+      if (doc.exists && mounted) {
+        final d = doc.data()!;
+        setState(() {
+          _fetchedClient = {
+            'name': '${d['name'] ?? d['firstName'] ?? ''} ${d['lastName'] ?? ''}'.trim(),
+            'email': d['email'] as String? ?? '',
+            'phone': d['phone'] as String? ?? '',
+          };
+        });
+      }
+    } catch (_) {}
+    if (mounted) setState(() => _fetchingClient = false);
+  }
+
+  Widget _infoRow(IconData icon, String text) => Row(
+    children: [
+      Icon(icon, size: 14, color: AppTheme.textSecondary),
+      const SizedBox(width: 6),
+      Expanded(
+        child: Text(text,
+            style: const TextStyle(
+                fontSize: 12, color: AppTheme.textSecondary)),
+      ),
+    ],
+  );
+
+  Future<void> _approve() async {
+    setState(() => _actioning = true);
+    try {
+      await widget.ref.read(packageRepositoryProvider).approveClientPackage(widget.cp.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Paquete aprobado. Se notificó al cliente.'),
+            backgroundColor: AppTheme.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Error: $e')));
+        setState(() => _actioning = false);
+      }
+    }
+  }
+
+  Future<void> _reject() async {
+    String reason = '';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => _RejectDialog(
+        packageName: widget.cp.packageName,
+        onConfirm: (r) => reason = r,
+      ),
+    );
+    if (confirmed != true) return;
+    setState(() => _actioning = true);
+    try {
+      await widget.ref
+          .read(packageRepositoryProvider)
+          .rejectClientPackage(widget.cp.id, reason: reason);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Solicitud rechazada.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Error: $e')));
+        setState(() => _actioning = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cp = widget.cp;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppTheme.warning.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.card_giftcard_outlined,
+                      color: AppTheme.warning, size: 18),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(cp.packageName,
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(
+                                  color: AppTheme.primaryDark,
+                                  fontWeight: FontWeight.w700)),
+                      Text(
+                        '${cp.totalSessions} sesiones · '
+                        'Solicitado el ${cp.purchasedAt.day}/${cp.purchasedAt.month}/${cp.purchasedAt.year}',
+                        style: const TextStyle(
+                            fontSize: 12, color: AppTheme.textSecondary),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppTheme.warning.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Text('Pendiente',
+                      style: TextStyle(
+                          color: AppTheme.warning,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700)),
+                ),
+              ],
+            ),
+            // Client info
+            const SizedBox(height: 10),
+            Builder(builder: (context) {
+              final name = cp.clientFirstName.isNotEmpty
+                  ? '${cp.clientFirstName} ${cp.clientLastName}'.trim()
+                  : _fetchedClient?['name'] ?? '';
+              final email = cp.clientEmail.isNotEmpty
+                  ? cp.clientEmail
+                  : _fetchedClient?['email'] ?? '';
+              final phone = cp.clientPhone.isNotEmpty
+                  ? cp.clientPhone
+                  : _fetchedClient?['phone'] ?? '';
+              if (_fetchingClient) {
+                return const Center(
+                    child: SizedBox(
+                        width: 16, height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2)));
+              }
+              if (name.isEmpty && email.isEmpty && phone.isEmpty) {
+                return const SizedBox.shrink();
+              }
+              return Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.oliveLight.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppTheme.oliveLight),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (name.isNotEmpty) _infoRow(Icons.person_outline, name),
+                    if (email.isNotEmpty) ...[const SizedBox(height: 4), _infoRow(Icons.email_outlined, email)],
+                    if (phone.isNotEmpty) ...[const SizedBox(height: 4), _infoRow(Icons.phone_outlined, phone)],
+                  ],
+                ),
+              );
+            }),
+            if (cp.requestNotes.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Row(children: [
+                const Icon(Icons.note_outlined,
+                    size: 14, color: AppTheme.textSecondary),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(cp.requestNotes,
+                      style: const TextStyle(
+                          fontSize: 12, color: AppTheme.textSecondary)),
+                ),
+              ]),
+            ],
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _actioning ? null : _reject,
+                  icon: const Icon(Icons.cancel_outlined, size: 16),
+                  label: const Text('Rechazar'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.error,
+                    side: const BorderSide(color: AppTheme.error),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 8),
+                    textStyle: const TextStyle(fontSize: 13),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: _actioning ? null : _approve,
+                  icon: _actioning
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.check_circle_outline, size: 16),
+                  label: const Text('Aprobar'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTheme.success,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 8),
+                    textStyle: const TextStyle(fontSize: 13),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RejectDialog extends StatefulWidget {
+  final String packageName;
+  final void Function(String reason) onConfirm;
+  const _RejectDialog({required this.packageName, required this.onConfirm});
+
+  @override
+  State<_RejectDialog> createState() => _RejectDialogState();
+}
+
+class _RejectDialogState extends State<_RejectDialog> {
+  final _ctrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Rechazar "${widget.packageName}"'),
+      content: TextField(
+        controller: _ctrl,
+        maxLines: 3,
+        autofocus: true,
+        decoration: const InputDecoration(
+          labelText: 'Motivo (opcional)',
+          hintText: 'Ej. Paquete no disponible por el momento...',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar')),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: AppTheme.error),
+          onPressed: () {
+            widget.onConfirm(_ctrl.text.trim());
+            Navigator.pop(context, true);
+          },
+          child: const Text('Rechazar'),
+        ),
+      ],
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
