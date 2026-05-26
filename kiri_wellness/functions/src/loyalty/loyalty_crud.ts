@@ -408,3 +408,133 @@ export async function buildLoyaltyProgressHtml(clientId: string): Promise<string
     return null;
   }
 }
+
+// ── createRewardAppointment ───────────────────────────────────────────────────
+// Public CF for client portal: books an appointment using a pending reward.
+// Does NOT require Firebase auth — validates via clientId + rewardId.
+
+export const createRewardAppointment = onCall(
+  { region: "us-central1", invoker: "public", enforceAppCheck: false },
+  async (request) => {
+    const { clientId, rewardId, serviceId, serviceName, date, time, notes } =
+      request.data as {
+        clientId: string;
+        rewardId: string;
+        serviceId: string;
+        serviceName?: string;
+        date: string;
+        time: string;
+        notes?: string;
+      };
+
+    if (!clientId || !rewardId || !serviceId || !date || !time) {
+      throw new HttpsError("invalid-argument", "Faltan campos requeridos.");
+    }
+
+    const database = db();
+
+    // 1. Validate reward
+    const rewardRef = database
+      .collection("clients")
+      .doc(clientId)
+      .collection("rewards")
+      .doc(rewardId);
+    const rewardSnap = await rewardRef.get();
+    if (!rewardSnap.exists) throw new HttpsError("not-found", "Regalía no encontrada.");
+
+    const reward = rewardSnap.data()!;
+    if (reward["status"] !== "pending") {
+      throw new HttpsError(
+        "failed-precondition",
+        `Esta regalía ya fue ${
+          reward["status"] === "redeemed" ? "canjeada" : "expirada"
+        }.`
+      );
+    }
+    if (reward["expiresAt"]) {
+      const expiresAt = (reward["expiresAt"] as admin.firestore.Timestamp).toDate();
+      if (new Date() > expiresAt) {
+        await rewardRef.update({ status: "expired" });
+        throw new HttpsError("failed-precondition", "Esta regalía ha expirado.");
+      }
+    }
+    if (reward["serviceId"] !== serviceId) {
+      throw new HttpsError("invalid-argument", "El servicio no coincide con la regalía.");
+    }
+
+    // 2. Look up client info
+    const clientSnap = await database.collection("clients").doc(clientId).get();
+    if (!clientSnap.exists) throw new HttpsError("not-found", "Cliente no encontrado.");
+    const clientData = clientSnap.data()!;
+
+    // 3. Look up service details
+    const svcSnap = await database.collection("services").doc(serviceId).get();
+    const serviceDurationMin: number = svcSnap.exists
+      ? ((svcSnap.data()?.["durationMinutes"] as number) ?? 60)
+      : 60;
+    const resolvedName: string =
+      serviceName ??
+      (svcSnap.exists ? ((svcSnap.data()?.["name"] as string) ?? "") : "");
+
+    // 4. Check slot availability
+    const [reqH, reqM] = time.split(":").map(Number);
+    const reqStart = reqH * 60 + reqM;
+    const reqEnd = reqStart + serviceDurationMin;
+
+    const settingsSnap = await database.collection("settings").doc("global").get();
+    const breakMinutes: number = settingsSnap.exists
+      ? ((settingsSnap.data()?.["breakMinutes"] as number) ?? 30)
+      : 30;
+
+    const conflictSnap = await database
+      .collection("appointments")
+      .where("date", "==", date)
+      .where("status", "in", ["requested", "confirmed"])
+      .get();
+
+    for (const doc of conflictSnap.docs) {
+      const d = doc.data();
+      const existT = d["time"] as string;
+      const existDur = (d["serviceDurationMin"] as number) ?? 60;
+      const [eh, em] = existT.split(":").map(Number);
+      const eStart = eh * 60 + em;
+      const eEnd = eStart + existDur + breakMinutes;
+      if (reqStart < eEnd && reqEnd + breakMinutes > eStart) {
+        throw new HttpsError("failed-precondition", `El horario ${time} no está disponible.`);
+      }
+    }
+
+    // 5. Create appointment (confirmed automatically — it's a reward)
+    const aptRef = database.collection("appointments").doc();
+    await aptRef.set({
+      clientId,
+      clientCode: clientData["clientCode"] ?? "",
+      clientName: (clientData["name"] as string) ?? (clientData["firstName"] as string) ?? "",
+      clientLastName: (clientData["lastName"] as string) ?? "",
+      clientPhone: (clientData["phone"] as string) ?? "",
+      clientEmail: (clientData["email"] as string) ?? "",
+      serviceId,
+      serviceName: resolvedName,
+      serviceDurationMin,
+      servicePrice: 0,
+      date,
+      time,
+      status: "confirmed",
+      notes: notes ?? null,
+      rewardId,
+      isReward: true,
+      clientPackageId: null,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // 6. Mark reward as redeemed
+    await rewardRef.update({
+      status: "redeemed",
+      redeemedAt: admin.firestore.FieldValue.serverTimestamp(),
+      redeemedAppointmentId: aptRef.id,
+    });
+
+    logger.info(`Reward appointment created: ${aptRef.id} for client ${clientId}`);
+    return { success: true, appointmentId: aptRef.id };
+  }
+);

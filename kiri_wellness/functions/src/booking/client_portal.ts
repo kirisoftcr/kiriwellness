@@ -73,15 +73,34 @@ export const lookupClientByEmail = onCall(
 
     if (snap.empty) return { found: false };
 
-    const d = snap.docs[0].data();
+    const clientDoc = snap.docs[0];
+    const d = clientDoc.data();
+    const clientId = clientDoc.id;
+
+    // Also fetch pending rewards so the booking page can show them
+    // without requiring direct Firestore access (which is auth-protected).
+    let pendingRewards: object[] = [];
+    try {
+      const rewardsSnap = await db()
+        .collection("clients")
+        .doc(clientId)
+        .collection("rewards")
+        .where("status", "==", "pending")
+        .get();
+      pendingRewards = rewardsSnap.docs.map((r) => ({ id: r.id, ...r.data() }));
+    } catch (_) {
+      // If rewards can't be fetched, just return empty — non-critical
+    }
+
     return {
       found: true,
-      clientId: snap.docs[0].id,
-      firstName: d["firstName"] ?? "",
+      clientId,
+      firstName: d["firstName"] ?? d["name"] ?? "",
       lastName: d["lastName"] ?? "",
       phone: d["phone"] ?? "",
       clientCode: d["clientCode"] ?? "",
       email: d["email"] ?? "",
+      pendingRewards,
     };
   }
 );

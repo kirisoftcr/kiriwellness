@@ -29,6 +29,7 @@ class _Step3ClientInfoState extends ConsumerState<Step3ClientInfo> {
   bool _isReturningClient = false;
   String _foundClientId = '';
   List<Map<String, dynamic>> _matchingPackages = [];
+  List<Map<String, dynamic>> _matchingRewards = [];
 
   @override
   void initState() {
@@ -77,6 +78,28 @@ class _Step3ClientInfoState extends ConsumerState<Step3ClientInfo> {
         final serviceId = ref.read(bookingProvider).selectedService?.id ?? '';
         if (_foundClientId.isNotEmpty && serviceId.isNotEmpty) {
           _checkPackageSessions(_foundClientId, serviceId);
+          // Use pending rewards returned directly by the CF (avoids auth
+          // requirement on the client/{id}/rewards subcollection).
+          final rawRewards = data['pendingRewards'] as List? ?? [];
+          final allRewards = rawRewards
+              .map((r) => Map<String, dynamic>.from(r as Map))
+              .toList();
+          final matchingRewards = allRewards.where((r) {
+            final rSvcId = r['serviceId'] as String?;
+            final expires = r['expiresAt'];
+            // Skip expired
+            if (expires != null) {
+              DateTime? expDate;
+              if (expires is Map) {
+                // Firestore Timestamp serialised as {_seconds, _nanoseconds}
+                final secs = (expires['_seconds'] as num?)?.toInt();
+                if (secs != null) expDate = DateTime.fromMillisecondsSinceEpoch(secs * 1000);
+              }
+              if (expDate != null && DateTime.now().isAfter(expDate)) return false;
+            }
+            return rSvcId == null || rSvcId.isEmpty || rSvcId == serviceId;
+          }).toList();
+          if (mounted) setState(() => _matchingRewards = matchingRewards);
         }
       } else {
         _emailCtrl.text = email;
@@ -120,6 +143,29 @@ class _Step3ClientInfoState extends ConsumerState<Step3ClientInfo> {
       builder: (_) => _PackageOtpBookingDialog(
         email: _emailLookupCtrl.text.trim(),
         packages: _matchingPackages,
+        serviceId: ref.read(bookingProvider).selectedService?.id ?? '',
+      ),
+    );
+    if (result != null && mounted) {
+      ref.read(bookingProvider.notifier).submitWithClient(
+        clientCode: result['clientCode'] as String,
+        clientId: result['clientId'] as String,
+        firstName: result['firstName'] as String,
+        lastName: result['lastName'] as String,
+        phone: result['phone'] as String,
+        email: result['email'] as String,
+        notes: '',
+      );
+    }
+  }
+
+  Future<void> _showRewardBookingDialog() async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _RewardOtpBookingDialog(
+        email: _emailLookupCtrl.text.trim(),
+        rewards: _matchingRewards,
         serviceId: ref.read(bookingProvider).selectedService?.id ?? '',
       ),
     );
@@ -325,6 +371,65 @@ class _Step3ClientInfoState extends ConsumerState<Step3ClientInfo> {
                       '¡Bienvenida de vuelta! Hemos pre-llenado tus datos.',
                       style: TextStyle(fontSize: 13, color: AppTheme.primaryDark),
                     ),
+                  ),
+                ],
+              ),
+            ),
+
+          // Reward offer card — shown FIRST when client has pending rewards for this service
+          if (_matchingRewards.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3EFF9),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.secondary.withValues(alpha: 0.6)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    const Icon(Icons.card_giftcard_outlined,
+                        color: AppTheme.secondary, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '¡Tienes ${_matchingRewards.length} regal${_matchingRewards.length == 1 ? 'ía' : 'ías'} disponible${_matchingRewards.length == 1 ? '' : 's'}!',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                            color: AppTheme.primaryDark),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Puedes usar una regalía para esta cita de forma completamente gratuita.',
+                    style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _showRewardBookingDialog,
+                      icon: const Icon(Icons.redeem_outlined, size: 16),
+                      label: const Text('Canjear regalía'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppTheme.secondary,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        textStyle: const TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w600),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'O continúa para reservar como cita normal.',
+                    style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                    textAlign: TextAlign.center,
                   ),
                 ],
               ),
@@ -966,6 +1071,335 @@ class _PackageOtpBookingDialogState
                         borderRadius: BorderRadius.circular(12)),
                   ),
                   child: const Text('Verificar y agendar',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: _sendOtp,
+                  child: const Text('Reenviar código',
+                      style: TextStyle(
+                          color: AppTheme.textSecondary, fontSize: 13)),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reward OTP Booking Dialog
+// Sends OTP → verifies → books appointment using reward → returns client data
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum _RwdOtpPhase { sending, verify, booking }
+
+class _RewardOtpBookingDialog extends ConsumerStatefulWidget {
+  final String email;
+  final List<Map<String, dynamic>> rewards;
+  final String serviceId;
+
+  const _RewardOtpBookingDialog({
+    required this.email,
+    required this.rewards,
+    required this.serviceId,
+  });
+
+  @override
+  ConsumerState<_RewardOtpBookingDialog> createState() =>
+      _RewardOtpBookingDialogState();
+}
+
+class _RewardOtpBookingDialogState
+    extends ConsumerState<_RewardOtpBookingDialog> {
+  _RwdOtpPhase _phase = _RwdOtpPhase.sending;
+  final _otpCtrl = TextEditingController();
+  late Map<String, dynamic> _selectedReward;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedReward = widget.rewards.first;
+    _sendOtp();
+  }
+
+  @override
+  void dispose() {
+    _otpCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _sendOtp() async {
+    setState(() {
+      _phase = _RwdOtpPhase.sending;
+      _error = null;
+    });
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('sendVerificationCode');
+      await callable.call({'email': widget.email});
+      if (mounted) setState(() => _phase = _RwdOtpPhase.verify);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = 'Error al enviar código. Intenta de nuevo.';
+          _phase = _RwdOtpPhase.verify;
+        });
+      }
+    }
+  }
+
+  Future<void> _verify() async {
+    final code = _otpCtrl.text.trim();
+    if (code.length != 6) return;
+    setState(() {
+      _phase = _RwdOtpPhase.booking;
+      _error = null;
+    });
+    try {
+      // Step 1: Verify OTP → get confirmed clientId
+      final verifyCallable =
+          FirebaseFunctions.instanceFor(region: 'us-central1')
+              .httpsCallable('verifyClientCode');
+      final verifyResult = await verifyCallable.call<Map<String, dynamic>>(
+          {'email': widget.email, 'code': code});
+      final clientId = verifyResult.data['clientId'] as String;
+      final clientData =
+          verifyResult.data['client'] as Map<String, dynamic>? ?? {};
+
+      // Step 2: Get booking date/time from booking provider
+      final booking = ref.read(bookingProvider);
+      final date = booking.selectedDate!;
+      final time = booking.selectedTime!;
+      final dateStr =
+          '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+      final timeStr =
+          '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+
+      // Step 3: Create appointment using reward
+      final bookCallable = FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('createRewardAppointment');
+      await bookCallable.call<Map<String, dynamic>>({
+        'clientId': clientId,
+        'rewardId': _selectedReward['id'] as String,
+        'serviceId': widget.serviceId,
+        'serviceName': _selectedReward['serviceName'] as String? ??
+            booking.selectedService!.name,
+        'date': dateStr,
+        'time': timeStr,
+      });
+
+      if (mounted) {
+        Navigator.of(context).pop({
+          'clientCode': clientData['clientCode'] as String? ?? '',
+          'clientId': clientId,
+          'firstName': clientData['firstName'] as String? ?? '',
+          'lastName': clientData['lastName'] as String? ?? '',
+          'phone': clientData['phone'] as String? ?? '',
+          'email': widget.email,
+        });
+      }
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.message ?? 'Error al procesar. Intenta de nuevo.';
+          _phase = _RwdOtpPhase.verify;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _phase = _RwdOtpPhase.verify;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isBusy =
+        _phase == _RwdOtpPhase.sending || _phase == _RwdOtpPhase.booking;
+
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Header
+              Row(children: [
+                const Icon(Icons.redeem_outlined, color: AppTheme.secondary),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text('Canjear regalía',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
+                          color: AppTheme.primaryDark)),
+                ),
+                if (!isBusy)
+                  IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close, size: 20)),
+              ]),
+              const Divider(height: 20),
+
+              // Reward selector (if multiple)
+              if (widget.rewards.length > 1) ...[
+                const Text('Selecciona la regalía:',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.textPrimary)),
+                const SizedBox(height: 8),
+                ...widget.rewards.map((r) {
+                  final isSelected = r['id'] == _selectedReward['id'];
+                  return RadioListTile<String>(
+                    value: r['id'] as String,
+                    groupValue: _selectedReward['id'] as String,
+                    onChanged: isBusy
+                        ? null
+                        : (v) => setState(() => _selectedReward =
+                            widget.rewards.firstWhere((x) => x['id'] == v)),
+                    title: Text(r['serviceName'] as String? ?? '',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: isSelected
+                                ? AppTheme.primaryDark
+                                : AppTheme.textPrimary,
+                            fontSize: 13)),
+                    subtitle: r['description'] != null &&
+                            (r['description'] as String).isNotEmpty
+                        ? Text(r['description'] as String,
+                            style: const TextStyle(
+                                fontSize: 12,
+                                color: AppTheme.textSecondary))
+                        : null,
+                    activeColor: AppTheme.secondary,
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                  );
+                }),
+                const SizedBox(height: 8),
+              ] else ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.secondary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(children: [
+                    const Icon(Icons.card_giftcard_outlined,
+                        color: AppTheme.secondary, size: 16),
+                    const SizedBox(width: 8),
+                    Text(
+                        _selectedReward['serviceName'] as String? ?? '',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                            color: AppTheme.primaryDark)),
+                  ]),
+                ),
+                const SizedBox(height: 12),
+              ],
+
+              // OTP section
+              if (_phase == _RwdOtpPhase.sending)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  child: Column(children: [
+                    CircularProgressIndicator(
+                        color: AppTheme.secondary, strokeWidth: 2),
+                    SizedBox(height: 12),
+                    Text('Enviando código de verificación...',
+                        style: TextStyle(
+                            color: AppTheme.textSecondary, fontSize: 13),
+                        textAlign: TextAlign.center),
+                  ]),
+                )
+              else if (_phase == _RwdOtpPhase.booking)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  child: Column(children: [
+                    CircularProgressIndicator(
+                        color: AppTheme.secondary, strokeWidth: 2),
+                    SizedBox(height: 12),
+                    Text('Agendando tu cita con regalía...',
+                        style: TextStyle(
+                            color: AppTheme.textSecondary, fontSize: 13),
+                        textAlign: TextAlign.center),
+                  ]),
+                )
+              else ...[
+                RichText(
+                  textAlign: TextAlign.center,
+                  text: TextSpan(
+                    style: const TextStyle(
+                        color: AppTheme.textSecondary, fontSize: 13),
+                    children: [
+                      const TextSpan(
+                          text: 'Enviamos un código de 6 dígitos a '),
+                      TextSpan(
+                          text: widget.email,
+                          style: const TextStyle(
+                              color: AppTheme.primaryDark,
+                              fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _otpCtrl,
+                  keyboardType: TextInputType.number,
+                  maxLength: 6,
+                  autofocus: true,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 28,
+                      letterSpacing: 10,
+                      fontWeight: FontWeight.w700),
+                  decoration: InputDecoration(
+                    labelText: 'Código',
+                    hintText: '123456',
+                    prefixIcon: const Icon(Icons.pin_outlined,
+                        color: AppTheme.secondary, size: 20),
+                    filled: true,
+                    fillColor: AppTheme.surface,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(
+                          color: AppTheme.secondary, width: 2),
+                    ),
+                  ),
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 8),
+                  Text(_error!,
+                      style: const TextStyle(
+                          color: AppTheme.error, fontSize: 13),
+                      textAlign: TextAlign.center),
+                ],
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: _verify,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTheme.secondary,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text('Verificar y canjear',
                       style: TextStyle(fontWeight: FontWeight.w600)),
                 ),
                 const SizedBox(height: 8),

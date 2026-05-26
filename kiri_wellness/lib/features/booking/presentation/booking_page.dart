@@ -25,6 +25,7 @@ class BookingState {
   final bool submitted;
   final String? clientCode; // KW-XXXXX assigned after submission
   final String? clientId;  // Firestore document ID
+  final String? prefilledEmail; // set in step2 email lookup
 
   const BookingState({
     this.step = 0,
@@ -39,6 +40,7 @@ class BookingState {
     this.submitted = false,
     this.clientCode,
     this.clientId,
+    this.prefilledEmail,
   });
 
   BookingState copyWith({
@@ -54,6 +56,7 @@ class BookingState {
     bool? submitted,
     String? clientCode,
     String? clientId,
+    String? prefilledEmail,
   }) {
     return BookingState(
       step: step ?? this.step,
@@ -68,6 +71,7 @@ class BookingState {
       submitted: submitted ?? this.submitted,
       clientCode: clientCode ?? this.clientCode,
       clientId: clientId ?? this.clientId,
+      prefilledEmail: prefilledEmail ?? this.prefilledEmail,
     );
   }
 }
@@ -83,6 +87,9 @@ class BookingNotifier extends StateNotifier<BookingState> {
 
   void selectTime(TimeOfDay time) =>
       state = state.copyWith(selectedTime: time);
+
+  void setPrefilledEmail(String email) =>
+      state = state.copyWith(prefilledEmail: email);
 
   void goToStep3() => state = state.copyWith(step: 2);
 

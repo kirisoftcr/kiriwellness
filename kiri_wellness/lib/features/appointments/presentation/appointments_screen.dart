@@ -2,14 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/calendar_helper.dart';
 import '../../../data/repositories/appointment_repository.dart';
 import '../../../data/repositories/client_repository.dart';
 import '../../../data/repositories/service_repository.dart';
+import '../../../data/repositories/package_repository.dart';
+import '../../../data/repositories/loyalty_repository.dart';
 import '../../../shared/models/appointment_model.dart';
 import '../../../shared/models/client_model.dart';
 import '../../../shared/models/service_model.dart';
+import '../../../shared/models/package_model.dart';
+import '../../../shared/models/loyalty_model.dart';
 import '../../../shared/widgets/section_header.dart';
 
 class AppointmentsScreen extends ConsumerStatefulWidget {
@@ -332,7 +337,7 @@ class _StatusBadge extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 // New Appointment Dialog (admin)
 // ─────────────────────────────────────────────────────────────────────────────
-
+enum _AptBookingMode { regular, packageSession, reward }
 class _NewAppointmentDialog extends ConsumerStatefulWidget {
   const _NewAppointmentDialog();
 
@@ -346,6 +351,15 @@ class _NewAppointmentDialogState
   // Step 1: client search
   final _searchCtrl = TextEditingController();
   ClientModel? _selectedClient;
+
+  // Booking mode (available after client is selected)
+  _AptBookingMode _bookingMode = _AptBookingMode.regular;
+  List<ClientPackageModel> _activePackages = [];
+  ClientPackageModel? _selectedPackage;
+  ClientPackageService? _selectedPackageService;
+  List<ClientReward> _pendingRewards = [];
+  ClientReward? _selectedReward;
+  bool _loadingOptions = false;
 
   // Step 2: service / date / time
   ServiceModel? _selectedService;
@@ -363,6 +377,49 @@ class _NewAppointmentDialogState
     _searchCtrl.dispose();
     _notesCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadClientOptions(String clientId) async {
+    setState(() => _loadingOptions = true);
+    try {
+      final packages = await ref
+          .read(packageRepositoryProvider)
+          .watchClientPackages(clientId)
+          .first;
+      final active = packages
+          .where((p) =>
+              p.status == ClientPackageStatus.active &&
+              p.services.any((s) => s.remainingSessions > 0))
+          .toList();
+      final rewards = await ref
+          .read(loyaltyRepositoryProvider)
+          .watchPendingRewards(clientId)
+          .first;
+      if (mounted) {
+        setState(() {
+          _activePackages = active;
+          _pendingRewards = rewards;
+          if (rewards.isNotEmpty) {
+            _bookingMode = _AptBookingMode.reward;
+          } else if (active.isNotEmpty) {
+            _bookingMode = _AptBookingMode.packageSession;
+          } else {
+            _bookingMode = _AptBookingMode.regular;
+          }
+          _loadingOptions = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loadingOptions = false);
+    }
+  }
+
+  String? get _effectiveServiceId {
+    return switch (_bookingMode) {
+      _AptBookingMode.regular => _selectedService?.id,
+      _AptBookingMode.packageSession => _selectedPackageService?.serviceId,
+      _AptBookingMode.reward => _selectedReward?.serviceId,
+    };
   }
 
   Future<void> _pickDate() async {
@@ -387,11 +444,12 @@ class _NewAppointmentDialogState
       _selectedTime = null;
       _slots = [];
     });
-    if (_selectedService != null) await _loadSlots();
+    if (_effectiveServiceId != null) await _loadSlots();
   }
 
   Future<void> _loadSlots() async {
-    if (_selectedDate == null || _selectedService == null) return;
+    final serviceId = _effectiveServiceId;
+    if (_selectedDate == null || serviceId == null) return;
     final dateStr =
         '${_selectedDate!.year}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}';
     setState(() {
@@ -402,7 +460,7 @@ class _NewAppointmentDialogState
     try {
       final slots = await ref
           .read(appointmentRepositoryProvider)
-          .getAvailableSlots(date: dateStr, serviceId: _selectedService!.id);
+          .getAvailableSlots(date: dateStr, serviceId: serviceId);
       setState(() {
         _slots = slots;
         _loadingSlots = false;
@@ -417,10 +475,19 @@ class _NewAppointmentDialogState
 
   Future<void> _submit() async {
     if (_selectedClient == null ||
-        _selectedService == null ||
+        _effectiveServiceId == null ||
         _selectedDate == null ||
         _selectedTime == null) {
       setState(() => _error = 'Completa todos los campos requeridos.');
+      return;
+    }
+    if (_bookingMode == _AptBookingMode.packageSession &&
+        (_selectedPackage == null || _selectedPackageService == null)) {
+      setState(() => _error = 'Selecciona un paquete y servicio.');
+      return;
+    }
+    if (_bookingMode == _AptBookingMode.reward && _selectedReward == null) {
+      setState(() => _error = 'Selecciona una regalía.');
       return;
     }
     final dateStr =
@@ -430,21 +497,67 @@ class _NewAppointmentDialogState
       _error = null;
     });
     try {
-      await ref.read(appointmentRepositoryProvider).createBooking(
-            firstName: _selectedClient!.name,
-            lastName: _selectedClient!.lastName,
-            phone: _selectedClient!.phone,
-            email: _selectedClient!.email,
-            serviceId: _selectedService!.id,
-            serviceName: _selectedService!.name,
-            serviceDurationMin: _selectedService!.durationMinutes,
-            servicePrice: _selectedService!.price,
-            date: dateStr,
-            time: _selectedTime!,
-            notes: _notesCtrl.text.trim().isEmpty
-                ? null
-                : _notesCtrl.text.trim(),
-          );
+      if (_bookingMode == _AptBookingMode.packageSession) {
+        final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
+            .httpsCallable('createPackageAppointment');
+        await callable.call({
+          'clientId': _selectedClient!.id,
+          'clientPackageId': _selectedPackage!.id,
+          'serviceId': _selectedPackageService!.serviceId,
+          'serviceName': _selectedPackageService!.serviceName,
+          'date': dateStr,
+          'time': _selectedTime!,
+          if (_notesCtrl.text.trim().isNotEmpty)
+            'notes': _notesCtrl.text.trim(),
+        });
+      } else if (_bookingMode == _AptBookingMode.reward) {
+        final services =
+            ref.read(activeServicesStreamProvider).valueOrNull ?? [];
+        final svc = services
+            .where((s) => s.id == _selectedReward!.serviceId)
+            .firstOrNull;
+        final result =
+            await ref.read(appointmentRepositoryProvider).createBooking(
+                  firstName: _selectedClient!.name,
+                  lastName: _selectedClient!.lastName,
+                  phone: _selectedClient!.phone,
+                  email: _selectedClient!.email,
+                  serviceId: _selectedReward!.serviceId,
+                  serviceName: _selectedReward!.serviceName,
+                  serviceDurationMin: svc?.durationMinutes ?? 60,
+                  servicePrice: 0,
+                  date: dateStr,
+                  time: _selectedTime!,
+                  notes: _notesCtrl.text.trim().isEmpty
+                      ? null
+                      : _notesCtrl.text.trim(),
+                  confirmDirectly: true,
+                );
+        final aptId = result['appointmentId'] as String?;
+        if (aptId != null) {
+          await ref.read(loyaltyRepositoryProvider).redeemReward(
+                clientId: _selectedClient!.id,
+                rewardId: _selectedReward!.id,
+                appointmentId: aptId,
+              );
+        }
+      } else {
+        await ref.read(appointmentRepositoryProvider).createBooking(
+              firstName: _selectedClient!.name,
+              lastName: _selectedClient!.lastName,
+              phone: _selectedClient!.phone,
+              email: _selectedClient!.email,
+              serviceId: _selectedService!.id,
+              serviceName: _selectedService!.name,
+              serviceDurationMin: _selectedService!.durationMinutes,
+              servicePrice: _selectedService!.price,
+              date: dateStr,
+              time: _selectedTime!,
+              notes: _notesCtrl.text.trim().isEmpty
+                  ? null
+                  : _notesCtrl.text.trim(),
+            );
+      }
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -470,6 +583,7 @@ class _NewAppointmentDialogState
   Widget build(BuildContext context) {
     final clientsAsync = ref.watch(clientsStreamProvider);
     final servicesAsync = ref.watch(activeServicesStreamProvider);
+    final hasOptions = _activePackages.isNotEmpty || _pendingRewards.isNotEmpty;
 
     // Filtered client list for search
     final allClients = clientsAsync.valueOrNull ?? [];
@@ -513,7 +627,7 @@ class _NewAppointmentDialogState
                 const SizedBox(height: 12),
               ],
 
-              // ── Client picker ───────────────────────────────────────────
+              // ── Client picker ──────────────────────────────────────────
               const Text('Cliente *',
                   style: TextStyle(
                       fontSize: 12,
@@ -527,6 +641,16 @@ class _NewAppointmentDialogState
                   onClear: () => setState(() {
                     _selectedClient = null;
                     _searchCtrl.clear();
+                    _activePackages = [];
+                    _pendingRewards = [];
+                    _bookingMode = _AptBookingMode.regular;
+                    _selectedPackage = null;
+                    _selectedPackageService = null;
+                    _selectedReward = null;
+                    _selectedService = null;
+                    _selectedDate = null;
+                    _selectedTime = null;
+                    _slots = [];
                   }),
                 )
               else ...[  
@@ -558,10 +682,17 @@ class _NewAppointmentDialogState
                       itemBuilder: (_, i) {
                         final c = filteredClients[i];
                         return InkWell(
-                          onTap: () => setState(() {
-                            _selectedClient = c;
-                            _searchCtrl.clear();
-                          }),
+                          onTap: () {
+                            setState(() {
+                              _selectedClient = c;
+                              _searchCtrl.clear();
+                              _selectedService = null;
+                              _selectedDate = null;
+                              _selectedTime = null;
+                              _slots = [];
+                            });
+                            _loadClientOptions(c.id);
+                          },
                           child: Padding(
                             padding: const EdgeInsets.symmetric(
                                 vertical: 8, horizontal: 4),
@@ -586,107 +717,278 @@ class _NewAppointmentDialogState
                     ),
                   ),
               ],
-              const SizedBox(height: 16),
 
-              // ── Service ─────────────────────────────────────────────────
-              servicesAsync.when(
-                loading: () => const Center(
-                    child: CircularProgressIndicator(
-                        color: AppTheme.primary, strokeWidth: 2)),
-                error: (e, _) => Text('Error: $e',
-                    style:
-                        const TextStyle(color: AppTheme.error)),
-                data: (services) =>
-                    DropdownButtonFormField<ServiceModel>(
-                  value: _selectedService,
-                  decoration:
-                      const InputDecoration(labelText: 'Servicio *'),
-                  items: services
-                      .map((s) => DropdownMenuItem(
-                            value: s,
-                            child: Text(
-                                '${s.name} (${s.durationMinutes} min)'),
-                          ))
-                      .toList(),
-                  onChanged: (s) {
-                    setState(() {
-                      _selectedService = s;
-                      _selectedTime = null;
-                      _slots = [];
-                    });
-                    if (s != null && _selectedDate != null) _loadSlots();
-                  },
-                ),
-              ),
-              const SizedBox(height: 12),
-
-              // ── Date ────────────────────────────────────────────────────
-              InkWell(
-                onTap: _pickDate,
-                borderRadius: BorderRadius.circular(8),
-                child: InputDecorator(
-                  decoration:
-                      const InputDecoration(labelText: 'Fecha *'),
-                  child: Row(
+              if (_selectedClient != null) ...[  
+                const SizedBox(height: 16),
+                // ── Booking mode selector (if packages/rewards available) ───
+                if (_loadingOptions)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 6),
+                    child: Center(
+                        child: SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppTheme.primary))),
+                  )
+                else if (hasOptions) ...[  
+                  const Text('Tipo de reserva',
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: AppTheme.textSecondary)),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
                     children: [
-                      Expanded(
-                        child: Text(
-                          _selectedDate != null
-                              ? _fmtDate(_selectedDate!)
-                              : 'Seleccionar fecha',
-                          style: TextStyle(
-                            color: _selectedDate != null
-                                ? AppTheme.textPrimary
-                                : AppTheme.textSecondary,
-                          ),
-                        ),
+                      _AptModeChip(
+                        label: 'Regular',
+                        icon: Icons.calendar_today_outlined,
+                        selected:
+                            _bookingMode == _AptBookingMode.regular,
+                        onTap: () => setState(() {
+                          _bookingMode = _AptBookingMode.regular;
+                          _selectedDate = null;
+                          _selectedTime = null;
+                          _slots = [];
+                        }),
                       ),
-                      const Icon(Icons.calendar_today_outlined,
-                          size: 18, color: AppTheme.textSecondary),
+                      if (_pendingRewards.isNotEmpty)
+                        _AptModeChip(
+                          label: 'Regalía (${_pendingRewards.length})',
+                          icon: Icons.card_giftcard_outlined,
+                          selected:
+                              _bookingMode == _AptBookingMode.reward,
+                          onTap: () => setState(() {
+                            _bookingMode = _AptBookingMode.reward;
+                            _selectedDate = null;
+                            _selectedTime = null;
+                            _slots = [];
+                          }),
+                        ),
+                      if (_activePackages.isNotEmpty)
+                        _AptModeChip(
+                          label:
+                              'Paquete (${_activePackages.fold(0, (s, p) => s + p.remainingSessions)})',
+                          icon: Icons.inventory_2_outlined,
+                          selected: _bookingMode ==
+                              _AptBookingMode.packageSession,
+                          onTap: () => setState(() {
+                            _bookingMode = _AptBookingMode.packageSession;
+                            _selectedDate = null;
+                            _selectedTime = null;
+                            _slots = [];
+                          }),
+                        ),
                     ],
                   ),
-                ),
-              ),
-              const SizedBox(height: 12),
+                  const SizedBox(height: 14),
+                ],
 
-              // ── Time slot ───────────────────────────────────────────────
-              if (_loadingSlots)
-                const Center(
-                    child: Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  child: CircularProgressIndicator(
-                      color: AppTheme.primary, strokeWidth: 2),
-                ))
-              else
-                DropdownButtonFormField<String>(
-                  value: _selectedTime,
-                  decoration: const InputDecoration(labelText: 'Hora *'),
-                  hint: Text(
-                    _selectedDate == null || _selectedService == null
-                        ? 'Selecciona servicio y fecha primero'
-                        : _slots.isEmpty
-                            ? 'Sin horarios disponibles'
-                            : 'Seleccionar hora',
+                // ── Regular: service ──────────────────────────────────
+                if (_bookingMode == _AptBookingMode.regular)
+                  servicesAsync.when(
+                    loading: () => const Center(
+                        child: CircularProgressIndicator(
+                            color: AppTheme.primary, strokeWidth: 2)),
+                    error: (e, _) => Text('Error: $e',
+                        style:
+                            const TextStyle(color: AppTheme.error)),
+                    data: (services) =>
+                        DropdownButtonFormField<ServiceModel>(
+                      value: _selectedService,
+                      decoration:
+                          const InputDecoration(labelText: 'Servicio *'),
+                      items: services
+                          .map((s) => DropdownMenuItem(
+                                value: s,
+                                child: Text(
+                                    '${s.name} (${s.durationMinutes} min)'),
+                              ))
+                          .toList(),
+                      onChanged: (s) {
+                        setState(() {
+                          _selectedService = s;
+                          _selectedTime = null;
+                          _slots = [];
+                        });
+                        if (s != null && _selectedDate != null)
+                          _loadSlots();
+                      },
+                    ),
                   ),
-                  items: _slots
-                      .map((t) => DropdownMenuItem(
-                            value: t,
-                            child: Text(t),
-                          ))
-                      .toList(),
-                  onChanged: _slots.isEmpty
-                      ? null
-                      : (t) => setState(() => _selectedTime = t),
-                ),
-              const SizedBox(height: 12),
 
-              // ── Notes ───────────────────────────────────────────────────
-              TextFormField(
-                controller: _notesCtrl,
-                maxLines: 2,
-                decoration: const InputDecoration(
-                    labelText: 'Notas (opcional)'),
-              ),
+                // ── Package: package + service ──────────────────────
+                if (_bookingMode == _AptBookingMode.packageSession) ...[  
+                  DropdownButtonFormField<ClientPackageModel>(
+                    value: _selectedPackage,
+                    decoration:
+                        const InputDecoration(labelText: 'Paquete *'),
+                    items: _activePackages
+                        .map((p) => DropdownMenuItem(
+                              value: p,
+                              child: Text(
+                                '${p.packageName} (${p.remainingSessions} sesiones)',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ))
+                        .toList(),
+                    onChanged: (p) => setState(() {
+                      _selectedPackage = p;
+                      _selectedPackageService = null;
+                      _selectedDate = null;
+                      _selectedTime = null;
+                      _slots = [];
+                    }),
+                  ),
+                  if (_selectedPackage != null) ...[  
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<ClientPackageService>(
+                      value: _selectedPackageService,
+                      decoration: const InputDecoration(
+                          labelText: 'Servicio del paquete *'),
+                      items: _selectedPackage!.services
+                          .where((s) => s.remainingSessions > 0)
+                          .map((s) => DropdownMenuItem(
+                                value: s,
+                                child: Text(
+                                  '${s.serviceName} (${s.remainingSessions} disponibles)',
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ))
+                          .toList(),
+                      onChanged: (s) {
+                        setState(() {
+                          _selectedPackageService = s;
+                          _selectedDate = null;
+                          _selectedTime = null;
+                          _slots = [];
+                        });
+                      },
+                    ),
+                  ],
+                ],
+
+                // ── Reward: reward selector ─────────────────────────
+                if (_bookingMode == _AptBookingMode.reward) ...[  
+                  DropdownButtonFormField<ClientReward>(
+                    value: _selectedReward,
+                    decoration: const InputDecoration(
+                        labelText: 'Regalía a canjear *'),
+                    items: _pendingRewards
+                        .map((r) => DropdownMenuItem(
+                              value: r,
+                              child: Text(
+                                '${r.serviceName} — ${r.description}',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ))
+                        .toList(),
+                    onChanged: (r) {
+                      setState(() {
+                        _selectedReward = r;
+                        _selectedDate = null;
+                        _selectedTime = null;
+                        _slots = [];
+                      });
+                    },
+                  ),
+                  if (_selectedReward != null) ...[  
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primaryLight.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(children: [
+                        const Icon(Icons.card_giftcard_outlined,
+                            size: 14, color: AppTheme.primary),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(_selectedReward!.description,
+                              style: const TextStyle(
+                                  fontSize: 12,
+                                  color: AppTheme.primaryDark)),
+                        ),
+                      ]),
+                    ),
+                  ],
+                ],
+
+                const SizedBox(height: 12),
+
+                // ── Date ─────────────────────────────────────────────
+                InkWell(
+                  onTap: _pickDate,
+                  borderRadius: BorderRadius.circular(8),
+                  child: InputDecorator(
+                    decoration:
+                        const InputDecoration(labelText: 'Fecha *'),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _selectedDate != null
+                                ? _fmtDate(_selectedDate!)
+                                : 'Seleccionar fecha',
+                            style: TextStyle(
+                              color: _selectedDate != null
+                                  ? AppTheme.textPrimary
+                                  : AppTheme.textSecondary,
+                            ),
+                          ),
+                        ),
+                        const Icon(Icons.calendar_today_outlined,
+                            size: 18, color: AppTheme.textSecondary),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // ── Time slot ────────────────────────────────────────
+                if (_loadingSlots)
+                  const Center(
+                      child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: CircularProgressIndicator(
+                        color: AppTheme.primary, strokeWidth: 2),
+                  ))
+                else
+                  DropdownButtonFormField<String>(
+                    value: _selectedTime,
+                    decoration:
+                        const InputDecoration(labelText: 'Hora *'),
+                    hint: Text(
+                      _effectiveServiceId == null || _selectedDate == null
+                          ? 'Selecciona servicio y fecha primero'
+                          : _slots.isEmpty
+                              ? 'Sin horarios disponibles'
+                              : 'Seleccionar hora',
+                    ),
+                    items: _slots
+                        .map((t) => DropdownMenuItem(
+                              value: t,
+                              child: Text(t),
+                            ))
+                        .toList(),
+                    onChanged: _slots.isEmpty
+                        ? null
+                        : (t) => setState(() => _selectedTime = t),
+                  ),
+                const SizedBox(height: 12),
+
+                // ── Notes ───────────────────────────────────────────
+                TextFormField(
+                  controller: _notesCtrl,
+                  maxLines: 2,
+                  decoration: const InputDecoration(
+                      labelText: 'Notas (opcional)'),
+                ),
+              ],
             ],
           ),
         ),
@@ -710,6 +1012,51 @@ class _NewAppointmentDialogState
               : const Text('Agendar cita'),
         ),
       ],
+    );
+  }
+}
+
+class _AptModeChip extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+  const _AptModeChip(
+      {required this.label,
+      required this.icon,
+      required this.selected,
+      required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected
+              ? AppTheme.primary
+              : AppTheme.primary.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selected
+                ? AppTheme.primary
+                : AppTheme.primary.withValues(alpha: 0.25),
+          ),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon,
+              size: 14,
+              color: selected ? Colors.white : AppTheme.primary),
+          const SizedBox(width: 5),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: selected ? Colors.white : AppTheme.primary)),
+        ]),
+      ),
     );
   }
 }

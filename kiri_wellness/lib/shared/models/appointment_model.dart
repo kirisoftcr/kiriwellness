@@ -46,6 +46,7 @@ class AppointmentModel {
   final String notes;
   final AppointmentStatus status;
   final DateTime? createdAt;
+  final bool isReward;
 
   const AppointmentModel({
     required this.id,
@@ -64,6 +65,7 @@ class AppointmentModel {
     this.notes = '',
     required this.status,
     this.createdAt,
+    this.isReward = false,
   });
 
   factory AppointmentModel.fromFirestore(DocumentSnapshot doc) {
@@ -85,6 +87,7 @@ class AppointmentModel {
       notes: d['notes'] as String? ?? '',
       status: AppointmentStatusX.fromString(d['status'] as String?),
       createdAt: (d['createdAt'] as Timestamp?)?.toDate(),
+      isReward: d['isReward'] as bool? ?? false,
     );
   }
 
@@ -106,6 +109,7 @@ class AppointmentModel {
       notes: d['notes'] as String? ?? '',
       status: AppointmentStatusX.fromString(d['status'] as String?),
       createdAt: null,
+      isReward: d['isReward'] as bool? ?? false,
     );
   }
 
@@ -145,6 +149,7 @@ class AppointmentModel {
       notes: notes ?? this.notes,
       status: status ?? this.status,
       createdAt: createdAt,
+      isReward: isReward,
     );
   }
 }

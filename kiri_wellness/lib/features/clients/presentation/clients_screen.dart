@@ -1,12 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/widgets/section_header.dart';
 import '../../../shared/models/client_model.dart';
 import '../../../shared/models/service_model.dart';
+import '../../../shared/models/package_model.dart';
+import '../../../shared/models/loyalty_model.dart';
 import '../../../data/repositories/client_repository.dart';
 import '../../../data/repositories/appointment_repository.dart';
 import '../../../data/repositories/service_repository.dart';
+import '../../../data/repositories/package_repository.dart';
+import '../../../data/repositories/loyalty_repository.dart';
 import '../../loyalty/presentation/client_rewards_panel.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -360,6 +365,28 @@ class _ClientTile extends ConsumerWidget {
               ],
             ),
           ),
+          // ── Paquetes expansion ────────────────────────────────────────────
+          Theme(
+            data: Theme.of(context).copyWith(
+              dividerColor: Colors.transparent,
+            ),
+            child: ExpansionTile(
+              tilePadding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+              leading: Icon(Icons.inventory_2_outlined,
+                  color: AppTheme.secondary, size: 20),
+              title: const Text(
+                'Paquetes activos',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.secondary),
+              ),
+              children: [
+                _ClientPackagesSummaryPanel(clientId: client.id),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -624,6 +651,8 @@ class _ClientFormDialogState extends ConsumerState<_ClientFormDialog> {
 // New Appointment Dialog
 // ─────────────────────────────────────────────────────────────────────────────
 
+enum _AppointmentBookingMode { regular, packageSession, reward }
+
 class _NewAppointmentDialog extends ConsumerStatefulWidget {
   final ClientModel client;
   const _NewAppointmentDialog({required this.client});
@@ -635,7 +664,24 @@ class _NewAppointmentDialog extends ConsumerStatefulWidget {
 
 class _NewAppointmentDialogState
     extends ConsumerState<_NewAppointmentDialog> {
+  // Booking mode
+  _AppointmentBookingMode _bookingMode = _AppointmentBookingMode.regular;
+
+  // Regular booking
   ServiceModel? _selectedService;
+
+  // Package booking
+  List<ClientPackageModel> _activePackages = [];
+  ClientPackageModel? _selectedPackage;
+  ClientPackageService? _selectedPackageService;
+
+  // Reward booking
+  List<ClientReward> _pendingRewards = [];
+  ClientReward? _selectedReward;
+
+  bool _loadingOptions = false;
+
+  // Common
   DateTime? _selectedDate;
   String? _selectedTime;
   final _notesCtrl = TextEditingController();
@@ -647,9 +693,59 @@ class _NewAppointmentDialogState
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    _loadClientOptions();
+  }
+
+  Future<void> _loadClientOptions() async {
+    setState(() => _loadingOptions = true);
+    try {
+      final packages = await ref
+          .read(packageRepositoryProvider)
+          .watchClientPackages(widget.client.id)
+          .first;
+      final active = packages
+          .where((p) =>
+              p.status == ClientPackageStatus.active &&
+              p.services.any((s) => s.remainingSessions > 0))
+          .toList();
+      final rewards = await ref
+          .read(loyaltyRepositoryProvider)
+          .watchPendingRewards(widget.client.id)
+          .first;
+      if (mounted) {
+        setState(() {
+          _activePackages = active;
+          _pendingRewards = rewards;
+          if (rewards.isNotEmpty) {
+            _bookingMode = _AppointmentBookingMode.reward;
+          } else if (active.isNotEmpty) {
+            _bookingMode = _AppointmentBookingMode.packageSession;
+          } else {
+            _bookingMode = _AppointmentBookingMode.regular;
+          }
+          _loadingOptions = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loadingOptions = false);
+    }
+  }
+
+  @override
   void dispose() {
     _notesCtrl.dispose();
     super.dispose();
+  }
+
+  String? get _effectiveServiceId {
+    return switch (_bookingMode) {
+      _AppointmentBookingMode.regular => _selectedService?.id,
+      _AppointmentBookingMode.packageSession =>
+        _selectedPackageService?.serviceId,
+      _AppointmentBookingMode.reward => _selectedReward?.serviceId,
+    };
   }
 
   Future<void> _pickDate() async {
@@ -673,11 +769,12 @@ class _NewAppointmentDialogState
       _selectedTime = null;
       _slots = [];
     });
-    if (_selectedService != null) await _loadSlots();
+    if (_effectiveServiceId != null) await _loadSlots();
   }
 
   Future<void> _loadSlots() async {
-    if (_selectedDate == null || _selectedService == null) return;
+    final serviceId = _effectiveServiceId;
+    if (_selectedDate == null || serviceId == null) return;
     final dateStr =
         '${_selectedDate!.year}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}';
     setState(() {
@@ -688,7 +785,7 @@ class _NewAppointmentDialogState
     try {
       final slots = await ref
           .read(appointmentRepositoryProvider)
-          .getAvailableSlots(date: dateStr, serviceId: _selectedService!.id);
+          .getAvailableSlots(date: dateStr, serviceId: serviceId);
       setState(() {
         _slots = slots;
         _loadingSlots = false;
@@ -702,10 +799,19 @@ class _NewAppointmentDialogState
   }
 
   Future<void> _submit() async {
-    if (_selectedService == null ||
-        _selectedDate == null ||
-        _selectedTime == null) {
+    final serviceId = _effectiveServiceId;
+    if (serviceId == null || _selectedDate == null || _selectedTime == null) {
       setState(() => _error = 'Completa todos los campos requeridos.');
+      return;
+    }
+    if (_bookingMode == _AppointmentBookingMode.packageSession &&
+        (_selectedPackage == null || _selectedPackageService == null)) {
+      setState(() => _error = 'Selecciona un paquete y servicio.');
+      return;
+    }
+    if (_bookingMode == _AppointmentBookingMode.reward &&
+        _selectedReward == null) {
+      setState(() => _error = 'Selecciona una regalía.');
       return;
     }
     final dateStr =
@@ -715,26 +821,73 @@ class _NewAppointmentDialogState
       _error = null;
     });
     try {
-      await ref.read(appointmentRepositoryProvider).createBooking(
-            firstName: widget.client.name,
-            lastName: widget.client.lastName,
-            phone: widget.client.phone,
-            email: widget.client.email,
-            serviceId: _selectedService!.id,
-            serviceName: _selectedService!.name,
-            serviceDurationMin: _selectedService!.durationMinutes,
-            servicePrice: _selectedService!.price,
-            date: dateStr,
-            time: _selectedTime!,
-            notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
-            confirmDirectly: _confirmDirectly,
-          );
+      if (_bookingMode == _AppointmentBookingMode.packageSession) {
+        final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
+            .httpsCallable('createPackageAppointment');
+        await callable.call({
+          'clientId': widget.client.id,
+          'clientPackageId': _selectedPackage!.id,
+          'serviceId': _selectedPackageService!.serviceId,
+          'serviceName': _selectedPackageService!.serviceName,
+          'date': dateStr,
+          'time': _selectedTime!,
+          if (_notesCtrl.text.trim().isNotEmpty)
+            'notes': _notesCtrl.text.trim(),
+        });
+      } else if (_bookingMode == _AppointmentBookingMode.reward) {
+        final services =
+            ref.read(activeServicesStreamProvider).valueOrNull ?? [];
+        final svc = services
+            .where((s) => s.id == _selectedReward!.serviceId)
+            .firstOrNull;
+        final result =
+            await ref.read(appointmentRepositoryProvider).createBooking(
+                  firstName: widget.client.name,
+                  lastName: widget.client.lastName,
+                  phone: widget.client.phone,
+                  email: widget.client.email,
+                  serviceId: _selectedReward!.serviceId,
+                  serviceName: _selectedReward!.serviceName,
+                  serviceDurationMin: svc?.durationMinutes ?? 60,
+                  servicePrice: 0,
+                  date: dateStr,
+                  time: _selectedTime!,
+                  notes: _notesCtrl.text.trim().isEmpty
+                      ? null
+                      : _notesCtrl.text.trim(),
+                  confirmDirectly: true,
+                );
+        final aptId = result['appointmentId'] as String?;
+        if (aptId != null) {
+          await ref.read(loyaltyRepositoryProvider).redeemReward(
+                clientId: widget.client.id,
+                rewardId: _selectedReward!.id,
+                appointmentId: aptId,
+              );
+        }
+      } else {
+        await ref.read(appointmentRepositoryProvider).createBooking(
+              firstName: widget.client.name,
+              lastName: widget.client.lastName,
+              phone: widget.client.phone,
+              email: widget.client.email,
+              serviceId: _selectedService!.id,
+              serviceName: _selectedService!.name,
+              serviceDurationMin: _selectedService!.durationMinutes,
+              servicePrice: _selectedService!.price,
+              date: dateStr,
+              time: _selectedTime!,
+              notes: _notesCtrl.text.trim().isEmpty
+                  ? null
+                  : _notesCtrl.text.trim(),
+              confirmDirectly: _confirmDirectly,
+            );
+      }
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-                'Cita agendada para ${widget.client.fullName}'),
+            content: Text('Cita agendada para ${widget.client.fullName}'),
             backgroundColor: AppTheme.primary,
           ),
         );
@@ -753,6 +906,7 @@ class _NewAppointmentDialogState
   @override
   Widget build(BuildContext context) {
     final servicesAsync = ref.watch(activeServicesStreamProvider);
+    final hasOptions = _activePackages.isNotEmpty || _pendingRewards.isNotEmpty;
 
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -777,52 +931,219 @@ class _NewAppointmentDialogState
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (_error != null) ...
-                [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: AppTheme.error.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(_error!,
-                        style: const TextStyle(color: AppTheme.error)),
+              if (_error != null) ...[  
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppTheme.error.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  const SizedBox(height: 12),
-                ],
-              // Service selector
-              servicesAsync.when(
-                loading: () => const Center(
-                    child: CircularProgressIndicator(
-                        color: AppTheme.primary, strokeWidth: 2)),
-                error: (e, _) =>
-                    Text('Error: $e', style: const TextStyle(color: AppTheme.error)),
-                data: (services) => DropdownButtonFormField<ServiceModel>(
-                  value: _selectedService,
-                  decoration: const InputDecoration(labelText: 'Servicio *'),
-                  items: services
-                      .map((s) => DropdownMenuItem(
-                            value: s,
-                            child: Text('${s.name} (${s.durationMinutes} min)'),
+                  child: Text(_error!,
+                      style: const TextStyle(color: AppTheme.error)),
+                ),
+                const SizedBox(height: 12),
+              ],
+              // ── Booking mode selector ────────────────────────────────────
+              if (_loadingOptions)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Center(
+                      child: SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppTheme.primary))),
+                )
+              else if (hasOptions) ...[  
+                const Text('Tipo de reserva',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.textSecondary)),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  children: [
+                    _ModeChip(
+                      label: 'Regular',
+                      icon: Icons.calendar_today_outlined,
+                      selected: _bookingMode ==
+                          _AppointmentBookingMode.regular,
+                      onTap: () => setState(() {
+                        _bookingMode = _AppointmentBookingMode.regular;
+                        _selectedDate = null;
+                        _selectedTime = null;
+                        _slots = [];
+                      }),
+                    ),
+                    if (_pendingRewards.isNotEmpty)
+                      _ModeChip(
+                        label: 'Regalía (${_pendingRewards.length})',
+                        icon: Icons.card_giftcard_outlined,
+                        selected:
+                            _bookingMode == _AppointmentBookingMode.reward,
+                        onTap: () => setState(() {
+                          _bookingMode = _AppointmentBookingMode.reward;
+                          _selectedDate = null;
+                          _selectedTime = null;
+                          _slots = [];
+                        }),
+                      ),
+                    if (_activePackages.isNotEmpty)
+                      _ModeChip(
+                        label:
+                            'Paquete (${_activePackages.fold(0, (s, p) => s + p.remainingSessions)})',
+                        icon: Icons.inventory_2_outlined,
+                        selected: _bookingMode ==
+                            _AppointmentBookingMode.packageSession,
+                        onTap: () => setState(() {
+                          _bookingMode =
+                              _AppointmentBookingMode.packageSession;
+                          _selectedDate = null;
+                          _selectedTime = null;
+                          _slots = [];
+                        }),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+              ],
+              // ── Regular: service selector ────────────────────────────────
+              if (_bookingMode == _AppointmentBookingMode.regular)
+                servicesAsync.when(
+                  loading: () => const Center(
+                      child: CircularProgressIndicator(
+                          color: AppTheme.primary, strokeWidth: 2)),
+                  error: (e, _) => Text('Error: $e',
+                      style: const TextStyle(color: AppTheme.error)),
+                  data: (services) =>
+                      DropdownButtonFormField<ServiceModel>(
+                    value: _selectedService,
+                    decoration:
+                        const InputDecoration(labelText: 'Servicio *'),
+                    items: services
+                        .map((s) => DropdownMenuItem(
+                              value: s,
+                              child: Text(
+                                  '${s.name} (${s.durationMinutes} min)'),
+                            ))
+                        .toList(),
+                    onChanged: (s) {
+                      setState(() {
+                        _selectedService = s;
+                        _selectedTime = null;
+                        _slots = [];
+                      });
+                      if (s != null && _selectedDate != null) _loadSlots();
+                    },
+                  ),
+                ),
+              // ── Package: package + service selectors ──────────────────────
+              if (_bookingMode == _AppointmentBookingMode.packageSession) ...[  
+                DropdownButtonFormField<ClientPackageModel>(
+                  value: _selectedPackage,
+                  decoration:
+                      const InputDecoration(labelText: 'Paquete *'),
+                  items: _activePackages
+                      .map((p) => DropdownMenuItem(
+                            value: p,
+                            child: Text(
+                              '${p.packageName} (${p.remainingSessions} sesiones)',
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ))
                       .toList(),
-                  onChanged: (s) {
+                  onChanged: (p) => setState(() {
+                    _selectedPackage = p;
+                    _selectedPackageService = null;
+                    _selectedDate = null;
+                    _selectedTime = null;
+                    _slots = [];
+                  }),
+                ),
+                if (_selectedPackage != null) ...[  
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<ClientPackageService>(
+                    value: _selectedPackageService,
+                    decoration: const InputDecoration(
+                        labelText: 'Servicio del paquete *'),
+                    items: _selectedPackage!.services
+                        .where((s) => s.remainingSessions > 0)
+                        .map((s) => DropdownMenuItem(
+                              value: s,
+                              child: Text(
+                                '${s.serviceName} (${s.remainingSessions} disponibles)',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ))
+                        .toList(),
+                    onChanged: (s) {
+                      setState(() {
+                        _selectedPackageService = s;
+                        _selectedDate = null;
+                        _selectedTime = null;
+                        _slots = [];
+                      });
+                    },
+                  ),
+                ],
+              ],
+              // ── Reward: reward selector ────────────────────────────────
+              if (_bookingMode == _AppointmentBookingMode.reward) ...[  
+                DropdownButtonFormField<ClientReward>(
+                  value: _selectedReward,
+                  decoration: const InputDecoration(
+                      labelText: 'Regalía a canjear *'),
+                  items: _pendingRewards
+                      .map((r) => DropdownMenuItem(
+                            value: r,
+                            child: Text(
+                              '${r.serviceName} — ${r.description}',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ))
+                      .toList(),
+                  onChanged: (r) {
                     setState(() {
-                      _selectedService = s;
+                      _selectedReward = r;
+                      _selectedDate = null;
                       _selectedTime = null;
                       _slots = [];
                     });
-                    if (s != null && _selectedDate != null) _loadSlots();
                   },
                 ),
-              ),
+                if (_selectedReward != null) ...[  
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primaryLight.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(children: [
+                      const Icon(Icons.card_giftcard_outlined,
+                          size: 14, color: AppTheme.primary),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(_selectedReward!.description,
+                            style: const TextStyle(
+                                fontSize: 12,
+                                color: AppTheme.primaryDark)),
+                      ),
+                    ]),
+                  ),
+                ],
+              ],
               const SizedBox(height: 12),
-              // Date picker
+              // ── Date picker ───────────────────────────────────────────────
               InkWell(
                 onTap: _pickDate,
                 borderRadius: BorderRadius.circular(8),
                 child: InputDecorator(
-                  decoration: const InputDecoration(labelText: 'Fecha *'),
+                  decoration:
+                      const InputDecoration(labelText: 'Fecha *'),
                   child: Row(
                     children: [
                       Expanded(
@@ -844,7 +1165,7 @@ class _NewAppointmentDialogState
                 ),
               ),
               const SizedBox(height: 12),
-              // Time slot selector
+              // ── Time slot selector ────────────────────────────────────────
               if (_loadingSlots)
                 const Center(
                     child: Padding(
@@ -855,17 +1176,18 @@ class _NewAppointmentDialogState
               else
                 DropdownButtonFormField<String>(
                   value: _selectedTime,
-                  decoration: const InputDecoration(labelText: 'Hora *'),
-                  hint: Text(_selectedDate == null || _selectedService == null
-                      ? 'Selecciona servicio y fecha primero'
-                      : _slots.isEmpty
-                          ? 'Sin horarios disponibles'
-                          : 'Seleccionar hora'),
+                  decoration:
+                      const InputDecoration(labelText: 'Hora *'),
+                  hint: Text(
+                    _effectiveServiceId == null || _selectedDate == null
+                        ? 'Selecciona servicio y fecha primero'
+                        : _slots.isEmpty
+                            ? 'Sin horarios disponibles'
+                            : 'Seleccionar hora',
+                  ),
                   items: _slots
-                      .map((t) => DropdownMenuItem(
-                            value: t,
-                            child: Text(t),
-                          ))
+                      .map((t) =>
+                          DropdownMenuItem(value: t, child: Text(t)))
                       .toList(),
                   onChanged: _slots.isEmpty
                       ? null
@@ -875,22 +1197,28 @@ class _NewAppointmentDialogState
               TextFormField(
                 controller: _notesCtrl,
                 maxLines: 3,
-                decoration: const InputDecoration(labelText: 'Notas (opcional)'),
+                decoration:
+                    const InputDecoration(labelText: 'Notas (opcional)'),
               ),
-              const SizedBox(height: 8),
-              CheckboxListTile(
-                value: _confirmDirectly,
-                onChanged: (v) => setState(() => _confirmDirectly = v ?? false),
-                title: const Text('Confirmar cita directamente',
-                    style: TextStyle(fontSize: 13)),
-                subtitle: const Text(
-                    'La cita quedará confirmada sin necesidad de email de confirmación',
-                    style: TextStyle(fontSize: 11, color: AppTheme.textSecondary)),
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                activeColor: AppTheme.primary,
-              ),
+              if (_bookingMode == _AppointmentBookingMode.regular) ...[  
+                const SizedBox(height: 8),
+                CheckboxListTile(
+                  value: _confirmDirectly,
+                  onChanged: (v) =>
+                      setState(() => _confirmDirectly = v ?? false),
+                  title: const Text('Confirmar cita directamente',
+                      style: TextStyle(fontSize: 13)),
+                  subtitle: const Text(
+                      'La cita quedará confirmada sin necesidad de email de confirmación',
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: AppTheme.textSecondary)),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  activeColor: AppTheme.primary,
+                ),
+              ],
             ],
           ),
         ),
@@ -919,6 +1247,184 @@ class _NewAppointmentDialogState
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+class _ModeChip extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+  const _ModeChip(
+      {required this.label,
+      required this.icon,
+      required this.selected,
+      required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected
+              ? AppTheme.primary
+              : AppTheme.primary.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selected
+                ? AppTheme.primary
+                : AppTheme.primary.withValues(alpha: 0.25),
+          ),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon,
+              size: 14,
+              color: selected ? Colors.white : AppTheme.primary),
+          const SizedBox(width: 5),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: selected ? Colors.white : AppTheme.primary)),
+        ]),
+      ),
+    );
+  }
+}
+
+class _ClientPackagesSummaryPanel extends ConsumerWidget {
+  final String clientId;
+  const _ClientPackagesSummaryPanel({required this.clientId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final pkgAsync = ref.watch(clientPackagesStreamProvider(clientId));
+    return pkgAsync.when(
+      loading: () => const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+        child: Center(
+            child: CircularProgressIndicator(
+                strokeWidth: 2, color: AppTheme.primary)),
+      ),
+      error: (e, _) => Padding(
+        padding: const EdgeInsets.all(16),
+        child: Text('Error: $e',
+            style: const TextStyle(color: AppTheme.error)),
+      ),
+      data: (packages) {
+        final active = packages
+            .where((p) => p.status == ClientPackageStatus.active)
+            .toList();
+        if (active.isEmpty) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+            child: Row(children: [
+              Icon(Icons.inventory_2_outlined,
+                  color: Colors.grey.shade400, size: 24),
+              const SizedBox(width: 12),
+              Text('Sin paquetes activos',
+                  style:
+                      TextStyle(color: Colors.grey.shade500, fontSize: 14)),
+            ]),
+          );
+        }
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Column(
+            children:
+                active.map((p) => _PackageSummaryCard(pkg: p)).toList(),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _PackageSummaryCard extends StatelessWidget {
+  final ClientPackageModel pkg;
+  const _PackageSummaryCard({required this.pkg});
+
+  @override
+  Widget build(BuildContext context) {
+    final d = pkg.expiresAt.toLocal();
+    final expiresLabel =
+        'Vence ${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.primaryLight.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+        border:
+            Border.all(color: AppTheme.primaryLight.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Expanded(
+              child: Text(pkg.packageName,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                      color: AppTheme.textPrimary)),
+            ),
+            Text(expiresLabel,
+                style: const TextStyle(
+                    fontSize: 11, color: AppTheme.textSecondary)),
+          ]),
+          const SizedBox(height: 6),
+          ...pkg.services.map((s) {
+            final remaining = s.remainingSessions;
+            final progress = s.totalSessions > 0
+                ? s.usedSessions / s.totalSessions
+                : 0.0;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(children: [
+                    Expanded(
+                        child: Text(s.serviceName,
+                            style: const TextStyle(
+                                fontSize: 12,
+                                color: AppTheme.textPrimary))),
+                    Text(
+                      '$remaining de ${s.totalSessions} disponible${remaining == 1 ? '' : 's'}',
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: remaining > 0
+                              ? AppTheme.primary
+                              : AppTheme.textSecondary,
+                          fontWeight: remaining > 0
+                              ? FontWeight.w600
+                              : FontWeight.normal),
+                    ),
+                  ]),
+                  const SizedBox(height: 3),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      value: progress.clamp(0.0, 1.0),
+                      minHeight: 5,
+                      backgroundColor:
+                          AppTheme.primaryLight.withValues(alpha: 0.3),
+                      valueColor: const AlwaysStoppedAnimation<Color>(
+                          AppTheme.primary),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+}
 
 class _Field extends StatelessWidget {
   final TextEditingController controller;

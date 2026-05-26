@@ -1,5 +1,6 @@
 // ignore: avoid_web_libraries_in_flutter
 import 'dart:html' as html;
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -573,6 +574,43 @@ class _AppointmentsList extends ConsumerWidget {
             style: FilledButton.styleFrom(
               backgroundColor: AppTheme.primary,
               padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              textStyle: const TextStyle(
+                  fontSize: 15, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ),
+        // ── Canjear regalía button ──────────────────────────────────────────
+        const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: () async {
+              final result = await showDialog<bool>(
+                context: context,
+                builder: (_) =>
+                    _ClientRewardBookingDialog(clientId: state.clientId),
+              );
+              if (result == true) {
+                notifier.refreshAppointments();
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('¡Regalía canjeada y cita agendada!'),
+                      backgroundColor: Color(0xFF2E7D32),
+                    ),
+                  );
+                }
+              }
+            },
+            icon: const Icon(Icons.card_giftcard_outlined, size: 18),
+            label: const Text('Canjear regalía'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppTheme.secondary,
+              side: BorderSide(
+                  color: AppTheme.secondary.withValues(alpha: 0.6)),
+              padding: const EdgeInsets.symmetric(vertical: 13),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12)),
               textStyle: const TextStyle(
@@ -1301,6 +1339,358 @@ class _PackageBookingDialogState extends State<_PackageBookingDialog> {
                         child: CircularProgressIndicator(
                             strokeWidth: 2, color: Colors.white))
                     : const Text('Confirmar cita',
+                        style: TextStyle(fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Client reward booking dialog
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ClientRewardBookingDialog extends StatefulWidget {
+  final String clientId;
+  const _ClientRewardBookingDialog({required this.clientId});
+
+  @override
+  State<_ClientRewardBookingDialog> createState() =>
+      _ClientRewardBookingDialogState();
+}
+
+class _ClientRewardBookingDialogState
+    extends State<_ClientRewardBookingDialog> {
+  List<Map<String, dynamic>> _rewards = [];
+  Map<String, dynamic>? _selectedReward;
+  bool _loadingRewards = true;
+  DateTime? _selectedDate;
+  String? _selectedTime;
+  List<String> _slots = [];
+  bool _loadingSlots = false;
+  bool _submitting = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRewards();
+  }
+
+  Future<void> _loadRewards() async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('clients')
+          .doc(widget.clientId)
+          .collection('rewards')
+          .where('status', isEqualTo: 'pending')
+          .get();
+      if (mounted) {
+        setState(() {
+          _rewards =
+              snap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+          _loadingRewards = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loadingRewards = false;
+          _error = 'No se pudieron cargar las regalías.';
+        });
+      }
+    }
+  }
+
+  Future<void> _loadSlots(DateTime date) async {
+    if (_selectedReward == null) return;
+    setState(() {
+      _loadingSlots = true;
+      _slots = [];
+      _selectedTime = null;
+    });
+    try {
+      final dateStr =
+          '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+      final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('getAvailableSlots');
+      final result = await callable.call<Map<String, dynamic>>({
+        'date': dateStr,
+        'serviceId': _selectedReward!['serviceId'] as String,
+      });
+      final raw = result.data['slots'] as List? ?? [];
+      if (mounted) {
+        setState(() {
+          _slots = raw.cast<String>();
+          _loadingSlots = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loadingSlots = false;
+          _error = 'Error al cargar horarios.';
+        });
+      }
+    }
+  }
+
+  Future<void> _submit() async {
+    if (_selectedReward == null ||
+        _selectedDate == null ||
+        _selectedTime == null) {
+      setState(() => _error = 'Completa todos los campos.');
+      return;
+    }
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      final dateStr =
+          '${_selectedDate!.year}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}';
+      final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('createRewardAppointment');
+      await callable.call({
+        'clientId': widget.clientId,
+        'rewardId': _selectedReward!['id'] as String,
+        'serviceId': _selectedReward!['serviceId'] as String,
+        'serviceName': _selectedReward!['serviceName'] as String? ?? '',
+        'date': dateStr,
+        'time': _selectedTime!,
+      });
+      if (mounted) Navigator.of(context).pop(true);
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) {
+        setState(() {
+          _submitting = false;
+          _error = e.message ?? 'Error al canjear.';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _submitting = false;
+          _error = e.toString();
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 500, maxHeight: 640),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(children: [
+                const Icon(Icons.card_giftcard_outlined,
+                    color: AppTheme.primary),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Canjear regalía',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 16,
+                              color: AppTheme.primaryDark)),
+                      Text('Agenda una cita gratuita con tu regalía',
+                          style: TextStyle(
+                              color: AppTheme.textSecondary, fontSize: 12)),
+                    ],
+                  ),
+                ),
+                IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close, size: 20)),
+              ]),
+              const Divider(height: 20),
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Text(_error!,
+                      style:
+                          const TextStyle(color: AppTheme.error, fontSize: 13)),
+                ),
+              if (_loadingRewards)
+                const Expanded(
+                    child: Center(
+                        child: CircularProgressIndicator(
+                            color: AppTheme.primary)))
+              else if (_rewards.isEmpty)
+                const Expanded(
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.card_giftcard_outlined,
+                            size: 48, color: AppTheme.primaryLight),
+                        SizedBox(height: 12),
+                        Text('No tienes regalías disponibles.',
+                            style:
+                                TextStyle(color: AppTheme.textSecondary)),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const Text('Regalía a canjear',
+                            style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 14,
+                                color: AppTheme.textPrimary)),
+                        const SizedBox(height: 8),
+                        ..._rewards.map((r) {
+                          final isSelected = _selectedReward == r;
+                          return GestureDetector(
+                            onTap: () => setState(() {
+                              _selectedReward = r;
+                              _selectedDate = null;
+                              _selectedTime = null;
+                              _slots = [];
+                            }),
+                            child: Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? AppTheme.primary.withValues(alpha: 0.1)
+                                    : AppTheme.surface,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: isSelected
+                                      ? AppTheme.primary
+                                      : const Color(0xFFE0E0E0),
+                                  width: isSelected ? 1.5 : 1,
+                                ),
+                              ),
+                              child: Row(children: [
+                                Icon(
+                                  isSelected
+                                      ? Icons.radio_button_checked
+                                      : Icons.radio_button_unchecked,
+                                  color: isSelected
+                                      ? AppTheme.primary
+                                      : AppTheme.textSecondary,
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        r['serviceName'] as String? ?? '',
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 14,
+                                            color: AppTheme.textPrimary),
+                                      ),
+                                      if ((r['description'] as String? ?? '')
+                                          .isNotEmpty)
+                                        Text(
+                                          r['description'] as String,
+                                          style: const TextStyle(
+                                              fontSize: 12,
+                                              color: AppTheme.textSecondary),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ]),
+                            ),
+                          );
+                        }),
+                        if (_selectedReward != null) ...[
+                          const SizedBox(height: 16),
+                          const Text('Selecciona una fecha',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 14,
+                                  color: AppTheme.textPrimary)),
+                          const SizedBox(height: 4),
+                          CalendarDatePicker(
+                            initialDate: _selectedDate ?? now,
+                            firstDate: now,
+                            lastDate: now.add(const Duration(days: 60)),
+                            onDateChanged: (date) {
+                              setState(() => _selectedDate = date);
+                              _loadSlots(date);
+                            },
+                          ),
+                          if (_selectedDate != null) ...[
+                            const SizedBox(height: 8),
+                            const Text('Horarios disponibles',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                    color: AppTheme.textPrimary)),
+                            const SizedBox(height: 8),
+                            if (_loadingSlots)
+                              const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 12),
+                                child: Center(
+                                    child: CircularProgressIndicator(
+                                        color: AppTheme.primary,
+                                        strokeWidth: 2)),
+                              )
+                            else if (_slots.isEmpty)
+                              const Text(
+                                  'No hay horarios disponibles para este día.',
+                                  style: TextStyle(
+                                      color: AppTheme.textSecondary,
+                                      fontSize: 13))
+                            else
+                              _TimeSlotGrid(
+                                slots: _slots,
+                                selected: _selectedTime,
+                                onSelected: (t) =>
+                                    setState(() => _selectedTime = t),
+                              ),
+                          ],
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: (_selectedReward != null &&
+                        _selectedDate != null &&
+                        _selectedTime != null &&
+                        !_submitting)
+                    ? _submit
+                    : null,
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTheme.primary,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+                child: _submitting
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : const Text('Canjear y agendar',
                         style: TextStyle(fontWeight: FontWeight.w600)),
               ),
             ],

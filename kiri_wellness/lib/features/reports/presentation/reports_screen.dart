@@ -266,12 +266,17 @@ class _ReportContent extends StatelessWidget {
       );
     }
 
-    final total = appointments.fold<double>(0, (s, a) => s + a.servicePrice);
-    final count = appointments.length;
+    // Exclude reward appointments (price = 0, isReward = true) from revenue metrics
+    final billableAppointments =
+        appointments.where((a) => !a.isReward).toList();
 
-    // Group by service
+    final total =
+        billableAppointments.fold<double>(0, (s, a) => s + a.servicePrice);
+    final count = billableAppointments.length;
+
+    // Group by service — only billable appointments
     final serviceMap = <String, _ServiceSummary>{};
-    for (final a in appointments) {
+    for (final a in billableAppointments) {
       final entry = serviceMap.putIfAbsent(
           a.serviceName,
           () => _ServiceSummary(name: a.serviceName));
@@ -567,12 +572,19 @@ class _ReportContent extends StatelessWidget {
                             overflow: TextOverflow.ellipsis)),
                     Expanded(
                         flex: 2,
-                        child: Text(_fmtCRC(a.servicePrice),
-                            textAlign: TextAlign.end,
-                            style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: AppTheme.primaryDark))),
+                        child: a.isReward
+                            ? const Text('Regalía',
+                                textAlign: TextAlign.end,
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppTheme.secondary))
+                            : Text(_fmtCRC(a.servicePrice),
+                                textAlign: TextAlign.end,
+                                style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppTheme.primaryDark))),
                   ]),
                 );
               }),
