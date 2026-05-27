@@ -5,7 +5,6 @@ import '../../../core/theme/app_theme.dart';
 import '../../../shared/models/service_model.dart';
 import 'steps/step1_service_selection.dart';
 import 'steps/step2_date_time.dart';
-import 'steps/step3_client_info.dart';
 import 'steps/step4_confirmation.dart';
 
 // ---------------------------------------------------------------------------
@@ -119,7 +118,7 @@ class BookingNotifier extends StateNotifier<BookingState> {
     required String notes,
   }) =>
       state = state.copyWith(
-        step: 3,
+        step: 2,
         submitted: true,
         clientCode: clientCode,
         clientId: clientId,
@@ -130,7 +129,7 @@ class BookingNotifier extends StateNotifier<BookingState> {
         notes: notes,
       );
 
-  void submit() => state = state.copyWith(step: 3, submitted: true);
+  void submit() => state = state.copyWith(step: 2, submitted: true);
 
   void back() {
     if (state.step > 0) state = state.copyWith(step: state.step - 1);
@@ -151,7 +150,7 @@ final bookingProvider =
 class BookingPage extends ConsumerWidget {
   const BookingPage({super.key});
 
-  static const _stepLabels = ['Servicio', 'Fecha y hora', 'Tus datos', 'Confirmación'];
+  static const _stepLabels = ['Servicio', 'Datos y fecha', 'Confirmación'];
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -173,7 +172,7 @@ class BookingPage extends ConsumerWidget {
             ),
           ),
           // Progress stepper
-          if (booking.step < 3)
+          if (booking.step < 2)
             SliverToBoxAdapter(
               child: _StepIndicator(
                 currentStep: booking.step,
@@ -210,9 +209,7 @@ class BookingPage extends ConsumerWidget {
       case 1:
         return const Step2DateTime(key: ValueKey(1));
       case 2:
-        return const Step3ClientInfo(key: ValueKey(2));
-      case 3:
-        return const Step4Confirmation(key: ValueKey(3));
+        return const Step4Confirmation(key: ValueKey(2));
       default:
         return const Step1ServiceSelection(key: ValueKey(0));
     }

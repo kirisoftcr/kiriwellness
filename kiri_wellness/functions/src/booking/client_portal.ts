@@ -65,32 +65,125 @@ export const lookupClientByEmail = onCall(
     const { email } = request.data as { email: string };
     if (!email) return { found: false };
 
+    const normalizedEmail = email.toLowerCase().trim();
+
     const snap = await db()
       .collection("clients")
-      .where("email", "==", email.toLowerCase().trim())
-      .limit(1)
+      .where("email", "==", normalizedEmail)
       .get();
 
     if (snap.empty) return { found: false };
 
-    const clientDoc = snap.docs[0];
-    const d = clientDoc.data();
-    const clientId = clientDoc.id;
+    const parseToMillis = (value: unknown): number | null => {
+      if (!value) return null;
+      if (value instanceof admin.firestore.Timestamp) return value.toMillis();
+      if (value instanceof Date) return value.getTime();
+      if (typeof value === "number") return value;
+      if (typeof value === "string") {
+        const ms = Date.parse(value);
+        return Number.isNaN(ms) ? null : ms;
+      }
+      if (typeof value === "object") {
+        const v = value as Record<string, unknown>;
+        const secRaw = v["_seconds"] ?? v["seconds"];
+        if (typeof secRaw === "number") return secRaw * 1000;
+      }
+      return null;
+    };
 
-    // Also fetch pending rewards so the booking page can show them
-    // without requiring direct Firestore access (which is auth-protected).
-    let pendingRewards: object[] = [];
-    try {
+    const loadPendingRewardsForClient = async (clientIdToLoad: string): Promise<object[]> => {
       const rewardsSnap = await db()
         .collection("clients")
-        .doc(clientId)
+        .doc(clientIdToLoad)
         .collection("rewards")
-        .where("status", "==", "pending")
         .get();
-      pendingRewards = rewardsSnap.docs.map((r) => ({ id: r.id, ...r.data() }));
-    } catch (_) {
-      // If rewards can't be fetched, just return empty — non-critical
+
+      return rewardsSnap.docs
+        .filter((r) => {
+          const rd = r.data() as Record<string, unknown>;
+          const status = String(rd["status"] ?? "").toLowerCase().trim();
+          if (status && status !== "pending") return false;
+
+          const redeemedAt = rd["redeemedAt"];
+          const redeemedAppointmentId = rd["redeemedAppointmentId"];
+          if (redeemedAt || redeemedAppointmentId) return false;
+
+          const expiresMs = parseToMillis(rd["expiresAt"]);
+          if (expiresMs != null && expiresMs < nowMs) return false;
+
+          return true;
+        })
+        .map((r) => {
+          const rd = r.data() as Record<string, unknown>;
+          const expiresMs = parseToMillis(rd["expiresAt"]);
+          return {
+            id: r.id,
+            serviceId: String(rd["serviceId"] ?? ""),
+            serviceName: String(rd["serviceName"] ?? ""),
+            description: String(rd["description"] ?? ""),
+            status: String(rd["status"] ?? "pending"),
+            expiresAtMs: expiresMs,
+          };
+        });
+    };
+
+    // If duplicates exist for same email, prefer the one that actually has
+    // valid pending rewards. Fallback to most recently updated/created doc.
+    let selectedClientDoc = snap.docs[0];
+    let selectedPendingRewards: object[] = [];
+    const nowMs = Date.now();
+
+    const docsByRecency = [...snap.docs].sort((a, b) => {
+      const aUpdated = a.data()["updatedAt"] as admin.firestore.Timestamp | undefined;
+      const bUpdated = b.data()["updatedAt"] as admin.firestore.Timestamp | undefined;
+      const aCreated = a.data()["createdAt"] as admin.firestore.Timestamp | undefined;
+      const bCreated = b.data()["createdAt"] as admin.firestore.Timestamp | undefined;
+      const aMs = aUpdated?.toMillis() ?? aCreated?.toMillis() ?? 0;
+      const bMs = bUpdated?.toMillis() ?? bCreated?.toMillis() ?? 0;
+      return bMs - aMs;
+    });
+
+    for (const doc of docsByRecency) {
+      try {
+        const pendingRewards = await loadPendingRewardsForClient(doc.id);
+
+        logger.info("lookupClientByEmail rewards check", {
+          email: normalizedEmail,
+          clientId: doc.id,
+          rewardsCount: pendingRewards.length,
+        });
+
+        if (pendingRewards.length > 0) {
+          selectedClientDoc = doc;
+          selectedPendingRewards = pendingRewards;
+          break;
+        }
+      } catch (e) {
+        logger.error("Error fetching rewards for client", { clientId: doc.id, error: e });
+      }
     }
+
+    // If no doc had valid rewards, still use the most recent client record.
+    if (selectedPendingRewards.length == 0 && docsByRecency.length > 0) {
+      selectedClientDoc = docsByRecency[0];
+      try {
+        selectedPendingRewards = await loadPendingRewardsForClient(selectedClientDoc.id);
+      } catch (e) {
+        logger.error("Error fetching rewards for selected client", {
+          clientId: selectedClientDoc.id,
+          error: e,
+        });
+      }
+    }
+
+    const d = selectedClientDoc.data();
+    const clientId = selectedClientDoc.id;
+
+    logger.info("lookupClientByEmail selected client", {
+      email: normalizedEmail,
+      clientId,
+      pendingRewardsCount: selectedPendingRewards.length,
+    });
 
     return {
       found: true,
@@ -100,7 +193,7 @@ export const lookupClientByEmail = onCall(
       phone: d["phone"] ?? "",
       clientCode: d["clientCode"] ?? "",
       email: d["email"] ?? "",
-      pendingRewards,
+      pendingRewards: selectedPendingRewards,
     };
   }
 );

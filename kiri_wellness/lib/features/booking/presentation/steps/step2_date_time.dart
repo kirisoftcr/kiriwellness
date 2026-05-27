@@ -7,6 +7,10 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../data/repositories/appointment_repository.dart';
 import '../booking_page.dart';
 
+// ---------------------------------------------------------------------------
+// Available slots provider — autoDispose keeps slots fresh between bookings
+// ---------------------------------------------------------------------------
+
 final _availableSlotsProvider = FutureProvider.autoDispose
     .family<List<String>, ({String date, String serviceId})>(
         (ref, args) async {
@@ -14,6 +18,10 @@ final _availableSlotsProvider = FutureProvider.autoDispose
       .watch(appointmentRepositoryProvider)
       .getAvailableSlots(date: args.date, serviceId: args.serviceId);
 });
+
+// ---------------------------------------------------------------------------
+// Step 2 — Combined: client data + rewards/packages + date/time
+// ---------------------------------------------------------------------------
 
 class Step2DateTime extends ConsumerStatefulWidget {
   const Step2DateTime({super.key});
@@ -23,24 +31,39 @@ class Step2DateTime extends ConsumerStatefulWidget {
 }
 
 class _Step2DateTimeState extends ConsumerState<Step2DateTime> {
-  DateTime _focusedDay = DateTime.now();
-  final _timeSlotsKey = GlobalKey();
-
+  final _formKey = GlobalKey<FormState>();
   final _emailCtrl = TextEditingController();
+  final _nameCtrl = TextEditingController();
+  final _lastNameCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+  final _notesCtrl = TextEditingController();
+
   bool _lookingUp = false;
   bool _lookupDone = false;
-  String? _lookupError;
-  List<Map<String, dynamic>> _pendingRewards = [];
-  Map<String, dynamic>? _selectedReward;
+  bool _isReturningClient = false;
   String _foundClientId = '';
+  List<Map<String, dynamic>> _pendingRewards = [];
+  List<Map<String, dynamic>> _matchingPackages = [];
+  Map<String, dynamic>? _selectedReward;
+  Map<String, dynamic>? _selectedPackage;
+  bool _submitting = false;
+  bool _confirmDirectly = false;
+
+  DateTime _focusedDay = DateTime.now();
+  final _timeSlotsKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
-    final email = ref.read(bookingProvider).prefilledEmail ?? '';
+    final b = ref.read(bookingProvider);
+    // Restore any previously entered data
+    _nameCtrl.text = b.clientName;
+    _lastNameCtrl.text = b.clientLastName;
+    _phoneCtrl.text = b.clientPhone;
+    _notesCtrl.text = b.notes;
+    final email = b.prefilledEmail ?? b.clientEmail;
     if (email.isNotEmpty) {
       _emailCtrl.text = email;
-      // Auto-lookup so rewards appear without the user having to click Verificar
       WidgetsBinding.instance.addPostFrameCallback((_) => _lookupEmail());
     }
   }
@@ -48,12 +71,98 @@ class _Step2DateTimeState extends ConsumerState<Step2DateTime> {
   @override
   void dispose() {
     _emailCtrl.dispose();
+    _nameCtrl.dispose();
+    _lastNameCtrl.dispose();
+    _phoneCtrl.dispose();
+    _notesCtrl.dispose();
     super.dispose();
   }
 
+  // ── Email lookup ──────────────────────────────────────────────────────────
+
+  Future<void> _lookupEmail() async {
+    final email = _emailCtrl.text.trim();
+    if (email.isEmpty || !email.contains('@')) return;
+    setState(() {
+      _lookingUp = true;
+      _pendingRewards = [];
+      _matchingPackages = [];
+      _selectedReward = null;
+      _selectedPackage = null;
+      _isReturningClient = false;
+    });
+    try {
+      final result = await FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('lookupClientByEmail')
+          .call<Map<String, dynamic>>({'email': email});
+      final data = result.data;
+      if (data['found'] == true) {
+        _foundClientId = data['clientId'] as String? ?? '';
+        _nameCtrl.text = data['firstName'] as String? ?? _nameCtrl.text;
+        _lastNameCtrl.text = data['lastName'] as String? ?? _lastNameCtrl.text;
+        _phoneCtrl.text = data['phone'] as String? ?? _phoneCtrl.text;
+        if (mounted) setState(() => _isReturningClient = true);
+
+        // Load rewards — CF already filters by status=pending & expiresAt > now
+        final rawRewards = data['pendingRewards'];
+        final rewardsList = (rawRewards is List ? rawRewards : [])
+            .map((r) => Map<String, dynamic>.from(r as Map))
+            .toList();
+        if (mounted) setState(() => _pendingRewards = rewardsList);
+
+        // Load packages (filtered to current service)
+        if (_foundClientId.isNotEmpty) {
+          _loadPackages(_foundClientId);
+        }
+      } else {
+        if (mounted) setState(() => _isReturningClient = false);
+      }
+    } catch (_) {
+      // Non-critical — client can still fill the form manually
+    } finally {
+      if (mounted) {
+        setState(() { _lookingUp = false; _lookupDone = true; });
+        ref.read(bookingProvider.notifier).setPrefilledEmail(email);
+      }
+    }
+  }
+
+  Future<void> _loadPackages(String clientId) async {
+    final serviceId = ref.read(bookingProvider).selectedService?.id ?? '';
+    if (serviceId.isEmpty) return;
+    try {
+      final result = await FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('getClientPackages')
+          .call<Map<String, dynamic>>({'clientId': clientId});
+      final raw = result.data['packages'] as List? ?? [];
+      final matching = raw.cast<Map<String, dynamic>>().where((p) {
+        if (p['status'] != 'active') return false;
+        final services = p['services'] as List<dynamic>? ?? [];
+        return services.any((s) {
+          final svc = s as Map<String, dynamic>;
+          final remaining = (svc['totalSessions'] as num? ?? 0).toInt() -
+              (svc['usedSessions'] as num? ?? 0).toInt();
+          return svc['serviceId'] == serviceId && remaining > 0;
+        });
+      }).toList();
+      if (mounted) setState(() => _matchingPackages = matching);
+    } catch (_) {}
+  }
+
+  // ── Effective service (reward/package may override) ───────────────────────
+
+  String? get _effectiveServiceId =>
+      _selectedReward?['serviceId'] as String? ??
+      ref.read(bookingProvider).selectedService?.id;
+
+  String get _effectiveServiceName =>
+      _selectedReward?['serviceName'] as String? ??
+      ref.read(bookingProvider).selectedService?.name ?? '';
+
+  // ── Scroll to time slots on mobile ───────────────────────────────────────
+
   void _scrollToTimeSlots() {
-    final isWide = MediaQuery.of(context).size.width >= 800;
-    if (isWide) return;
+    if (MediaQuery.of(context).size.width >= 800) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final ctx = _timeSlotsKey.currentContext;
       if (ctx != null) {
@@ -65,92 +174,212 @@ class _Step2DateTimeState extends ConsumerState<Step2DateTime> {
     });
   }
 
-  Future<void> _lookupEmail() async {
-    final email = _emailCtrl.text.trim();
-    if (email.isEmpty || !email.contains('@')) {
-      setState(() => _lookupError = 'Ingresa un correo válido.');
+  // ── Submit ────────────────────────────────────────────────────────────────
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    final booking = ref.read(bookingProvider);
+    if (booking.selectedDate == null || booking.selectedTime == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Selecciona una fecha y hora primero.'),
+        backgroundColor: AppTheme.warning,
+      ));
       return;
     }
-    setState(() {
-      _lookingUp = true;
-      _lookupError = null;
-      _pendingRewards = [];
-      _selectedReward = null;
-    });
-    try {
-      final result = await FirebaseFunctions.instanceFor(region: 'us-central1')
-          .httpsCallable('lookupClientByEmail')
-          .call<Map<String, dynamic>>({'email': email});
-      final data = result.data;
-      if (data['found'] == true) {
-        _foundClientId = data['clientId'] as String? ?? '';
-        final rawRewards = data['pendingRewards'] as List? ?? [];
-        final valid = rawRewards
-            .map((r) => Map<String, dynamic>.from(r as Map))
-            .where((r) {
-          final expires = r['expiresAt'];
-          if (expires != null && expires is Map) {
-            final secs = (expires['_seconds'] as num?)?.toInt();
-            if (secs != null &&
-                DateTime.now().isAfter(
-                    DateTime.fromMillisecondsSinceEpoch(secs * 1000))) {
-              return false;
-            }
-          }
-          return true;
-        }).toList();
-        if (mounted) setState(() => _pendingRewards = valid);
-      }
-    } catch (_) {
-      // Non-critical
-    } finally {
-      if (mounted) {
-        setState(() {
-          _lookingUp = false;
-          _lookupDone = true;
-        });
-        ref.read(bookingProvider.notifier).setPrefilledEmail(email);
-      }
-    }
-  }
-
-  String? get _effectiveServiceId =>
-      _selectedReward?['serviceId'] as String? ??
-      ref.read(bookingProvider).selectedService?.id;
-
-  Future<void> _handleContinue() async {
-    final booking = ref.read(bookingProvider);
-    final notifier = ref.read(bookingProvider.notifier);
 
     if (_selectedReward != null) {
-      final email = _emailCtrl.text.trim();
-      final rewardServiceId =
-          _selectedReward!['serviceId'] as String? ?? booking.selectedService!.id;
-      final result = await showDialog<Map<String, dynamic>>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => _RewardOtpDialog(
-          email: email,
-          clientId: _foundClientId,
-          reward: _selectedReward!,
-          serviceId: rewardServiceId,
-        ),
-      );
-      if (result != null && mounted) {
-        notifier.submitWithClient(
-          clientCode: result['clientCode'] as String,
-          clientId: result['clientId'] as String,
-          firstName: result['firstName'] as String,
-          lastName: result['lastName'] as String,
-          phone: result['phone'] as String,
-          email: email,
-          notes: '',
-        );
-      }
+      await _submitReward();
+    } else if (_selectedPackage != null) {
+      await _submitPackage();
     } else {
-      notifier.goToStep3();
+      await _submitNormal();
     }
   }
+
+  Future<void> _submitNormal() async {
+    setState(() => _submitting = true);
+    final booking = ref.read(bookingProvider);
+    final notifier = ref.read(bookingProvider.notifier);
+    try {
+      final date = booking.selectedDate!;
+      final time = booking.selectedTime!;
+      final dateStr =
+          "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
+      final timeStr =
+          "${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}";
+
+      final result = await FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('createBooking')
+          .call<Map<String, dynamic>>({
+        'firstName': _nameCtrl.text.trim(),
+        'lastName': _lastNameCtrl.text.trim(),
+        'phone': _phoneCtrl.text.trim(),
+        'email': _emailCtrl.text.trim(),
+        'serviceId': booking.selectedService!.id,
+        'serviceName': booking.selectedService!.name,
+        'serviceDurationMin': booking.selectedService!.durationMinutes,
+        'servicePrice': booking.selectedService!.price,
+        'date': dateStr,
+        'time': timeStr,
+        'notes': _notesCtrl.text.trim(),
+        if (_confirmDirectly) 'confirmDirectly': true,
+      });
+
+      final data = result.data;
+      notifier.submitWithClient(
+        clientCode: data['clientCode'] as String,
+        clientId: data['clientId'] as String,
+        firstName: _nameCtrl.text.trim(),
+        lastName: _lastNameCtrl.text.trim(),
+        phone: _phoneCtrl.text.trim(),
+        email: _emailCtrl.text.trim(),
+        notes: _notesCtrl.text.trim(),
+      );
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) {
+        if (e.code == 'already-exists') {
+          // Slot taken — reset date/time
+          ref.read(bookingProvider.notifier).selectDate(DateTime.now());
+          ref.read(bookingProvider.notifier).selectTime(const TimeOfDay(hour: 0, minute: 0));
+          setState(() {});
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(e.message ?? 'El horario ya no está disponible.'),
+            backgroundColor: AppTheme.warning,
+            duration: const Duration(seconds: 4),
+          ));
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Error: ${e.message}'),
+            backgroundColor: AppTheme.error,
+          ));
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error al guardar la cita: $e'),
+          backgroundColor: AppTheme.error,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  Future<void> _submitReward() async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _OtpDialog(
+        email: _emailCtrl.text.trim(),
+        title: 'Canjear regalía',
+        icon: Icons.redeem_outlined,
+        iconColor: AppTheme.secondary,
+        descriptionWidget: _RewardChip(reward: _selectedReward!),
+        onVerified: (clientId, clientData) async {
+          final booking = ref.read(bookingProvider);
+          final date = booking.selectedDate!;
+          final time = booking.selectedTime!;
+          final dateStr =
+              "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
+          final timeStr =
+              "${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}";
+          await FirebaseFunctions.instanceFor(region: 'us-central1')
+              .httpsCallable('createRewardAppointment')
+              .call<Map<String, dynamic>>({
+            'clientId': clientId,
+            'rewardId': _selectedReward!['id'] as String,
+            'serviceId': _selectedReward!['serviceId'] as String? ??
+                booking.selectedService!.id,
+            'serviceName': _selectedReward!['serviceName'] as String? ??
+                booking.selectedService!.name,
+            'date': dateStr,
+            'time': timeStr,
+          });
+        },
+      ),
+    );
+    if (result != null && mounted) {
+      ref.read(bookingProvider.notifier).submitWithClient(
+        clientCode: result['clientCode'] as String,
+        clientId: result['clientId'] as String,
+        firstName: _nameCtrl.text.trim().isNotEmpty
+            ? _nameCtrl.text.trim()
+            : result['firstName'] as String,
+        lastName: _lastNameCtrl.text.trim().isNotEmpty
+            ? _lastNameCtrl.text.trim()
+            : result['lastName'] as String,
+        phone: _phoneCtrl.text.trim().isNotEmpty
+            ? _phoneCtrl.text.trim()
+            : result['phone'] as String,
+        email: _emailCtrl.text.trim(),
+        notes: _notesCtrl.text.trim(),
+      );
+    }
+  }
+
+  Future<void> _submitPackage() async {
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _OtpDialog(
+        email: _emailCtrl.text.trim(),
+        title: 'Usar sesión del paquete',
+        icon: Icons.card_giftcard_outlined,
+        iconColor: AppTheme.primary,
+        descriptionWidget: _PackageChip(pkg: _selectedPackage!),
+        onVerified: (clientId, clientData) async {
+          final booking = ref.read(bookingProvider);
+          final date = booking.selectedDate!;
+          final time = booking.selectedTime!;
+          final dateStr =
+              "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
+          final timeStr =
+              "${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}";
+          final services =
+              (_selectedPackage!['services'] as List<dynamic>? ?? [])
+                  .cast<Map<String, dynamic>>();
+          final svcEntry = services.firstWhere(
+            (s) => s['serviceId'] == booking.selectedService?.id,
+            orElse: () => {},
+          );
+          await FirebaseFunctions.instanceFor(region: 'us-central1')
+              .httpsCallable('createPackageAppointment')
+              .call<Map<String, dynamic>>({
+            'clientId': clientId,
+            'clientPackageId': _selectedPackage!['id'] as String,
+            'serviceId': booking.selectedService!.id,
+            'serviceName': svcEntry.isNotEmpty
+                ? svcEntry['serviceName'] as String? ??
+                    booking.selectedService!.name
+                : booking.selectedService!.name,
+            'date': dateStr,
+            'time': timeStr,
+            'notes': '',
+          });
+        },
+      ),
+    );
+    if (result != null && mounted) {
+      ref.read(bookingProvider.notifier).submitWithClient(
+        clientCode: result['clientCode'] as String,
+        clientId: result['clientId'] as String,
+        firstName: _nameCtrl.text.trim().isNotEmpty
+            ? _nameCtrl.text.trim()
+            : result['firstName'] as String,
+        lastName: _lastNameCtrl.text.trim().isNotEmpty
+            ? _lastNameCtrl.text.trim()
+            : result['lastName'] as String,
+        phone: _phoneCtrl.text.trim().isNotEmpty
+            ? _phoneCtrl.text.trim()
+            : result['phone'] as String,
+        email: _emailCtrl.text.trim(),
+        notes: _notesCtrl.text.trim(),
+      );
+    }
+  }
+
+  // ── Build ─────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -159,140 +388,206 @@ class _Step2DateTimeState extends ConsumerState<Step2DateTime> {
     final selectedDate = booking.selectedDate;
     final selectedTime = booking.selectedTime;
     final isWide = MediaQuery.of(context).size.width >= 800;
-
-    final rewardServiceName = _selectedReward?['serviceName'] as String?;
-    final serviceLabel = rewardServiceName ?? booking.selectedService?.name;
-    final serviceDuration = booking.selectedService?.durationMinutes;
     final effectiveSvcId = _effectiveServiceId;
-    final canContinue = selectedDate != null && selectedTime != null;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Elige fecha y hora',
-            style: Theme.of(context).textTheme.displayMedium),
-        const SizedBox(height: 4),
-        Text(
-          'Selecciona el día y la hora disponible para tu cita',
-          style: Theme.of(context)
-              .textTheme
-              .bodyMedium
-              ?.copyWith(color: AppTheme.textSecondary),
-        ),
-        const SizedBox(height: 24),
-
-        _EmailLookupSection(
-          emailCtrl: _emailCtrl,
-          lookingUp: _lookingUp,
-          lookupDone: _lookupDone,
-          lookupError: _lookupError,
-          pendingRewards: _pendingRewards,
-          selectedReward: _selectedReward,
-          onLookup: _lookupEmail,
-          onRewardSelected: (reward) {
-            final prevSvcId = _selectedReward?['serviceId'] as String?;
-            final newSvcId = reward['serviceId'] as String?;
-            setState(() {
-              _selectedReward =
-                  (_selectedReward != null && _selectedReward!['id'] == reward['id'])
-                      ? null
-                      : reward;
-            });
-            if (prevSvcId != newSvcId) {
-              notifier.selectTime(const TimeOfDay(hour: 0, minute: 0));
-            }
-          },
-        ),
-        const SizedBox(height: 20),
-
-        if (serviceLabel != null)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            margin: const EdgeInsets.only(bottom: 20),
-            decoration: BoxDecoration(
-              color: _selectedReward != null
-                  ? AppTheme.secondary.withValues(alpha: 0.12)
-                  : AppTheme.primaryLight.withValues(alpha: 0.3),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                  color: _selectedReward != null
-                      ? AppTheme.secondary.withValues(alpha: 0.5)
-                      : AppTheme.primaryLight),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  _selectedReward != null
-                      ? Icons.card_giftcard_outlined
-                      : Icons.spa_outlined,
-                  size: 18,
-                  color: _selectedReward != null
-                      ? AppTheme.secondary
-                      : AppTheme.primary,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  serviceLabel,
-                  style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: _selectedReward != null
-                          ? AppTheme.secondary
-                          : AppTheme.primaryDark),
-                ),
-                if (_selectedReward != null) ...[
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: AppTheme.secondary,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: const Text('REGALÍA',
-                        style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.white,
-                            letterSpacing: 0.5)),
-                  ),
-                ] else if (serviceDuration != null) ...[
-                  const SizedBox(width: 8),
-                  Text('· $serviceDuration min',
-                      style: const TextStyle(
-                          fontSize: 13, color: AppTheme.textSecondary)),
-                ],
-              ],
-            ),
+    return Form(
+      key: _formKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Tus datos y fecha',
+              style: Theme.of(context).textTheme.displayMedium),
+          const SizedBox(height: 4),
+          Text(
+            'Ingresa tus datos y elige el día y hora de tu cita',
+            style: Theme.of(context)
+                .textTheme
+                .bodyMedium
+                ?.copyWith(color: AppTheme.textSecondary),
           ),
+          const SizedBox(height: 24),
 
-        if (isWide)
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                  child: _CalendarCard(
-                focusedDay: _focusedDay,
-                selectedDay: selectedDate,
-                onDaySelected: (day) {
-                  setState(() => _focusedDay = day);
-                  notifier.selectDate(day);
-                  notifier.selectTime(const TimeOfDay(hour: 0, minute: 0));
+          // ── 1. Email lookup ───────────────────────────────────────────────
+          _SectionLabel(label: 'Correo electrónico', icon: Icons.email_outlined),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(
+              child: TextFormField(
+                controller: _emailCtrl,
+                keyboardType: TextInputType.emailAddress,
+                onFieldSubmitted: (_) => _lookupEmail(),
+                decoration: _inputDeco(
+                  label: 'tu@correo.com',
+                  icon: Icons.email_outlined,
+                ),
+                validator: (v) {
+                  if (v != null && v.trim().isNotEmpty && !v.contains('@')) {
+                    return 'Correo inválido';
+                  }
+                  return null;
                 },
-              )),
-              const SizedBox(width: 20),
+              ),
+            ),
+            const SizedBox(width: 10),
+            FilledButton(
+              onPressed: _lookingUp ? null : _lookupEmail,
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.primary,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              child: _lookingUp
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Text('Verificar'),
+            ),
+          ]),
+
+          // Returning client banner
+          if (_lookupDone && _isReturningClient) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppTheme.primaryLight.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.primaryLight),
+              ),
+              child: const Row(children: [
+                Icon(Icons.check_circle_outline, color: AppTheme.primary, size: 18),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '¡Bienvenida de vuelta! Hemos pre-llenado tus datos.',
+                    style: TextStyle(fontSize: 13, color: AppTheme.primaryDark),
+                  ),
+                ),
+              ]),
+            ),
+          ],
+          const SizedBox(height: 20),
+
+          // ── 2. Client form ────────────────────────────────────────────────
+          _SectionLabel(label: 'Tus datos', icon: Icons.person_outline),
+          const SizedBox(height: 10),
+          if (isWide)
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Expanded(child: _nameField()),
+              const SizedBox(width: 14),
+              Expanded(child: _lastNameField()),
+            ])
+          else ...[_nameField(), const SizedBox(height: 14), _lastNameField()],
+          const SizedBox(height: 14),
+          _phoneField(),
+          const SizedBox(height: 20),
+
+          // ── 3. Rewards ────────────────────────────────────────────────────
+          if (_pendingRewards.isNotEmpty) ...[
+            _SectionLabel(
+              label: 'Tus regalías disponibles',
+              icon: Icons.redeem_outlined,
+              color: AppTheme.secondary,
+            ),
+            const SizedBox(height: 8),
+            ..._pendingRewards.map((r) {
+              final isSelected =
+                  _selectedReward != null && _selectedReward!['id'] == r['id'];
+              return _SelectableCard(
+                selected: isSelected,
+                selectedColor: AppTheme.secondary,
+                icon: Icons.card_giftcard_outlined,
+                title: r['serviceName'] as String? ?? '',
+                subtitle: r['description'] as String?,
+                badge: 'REGALÍA',
+                badgeColor: AppTheme.secondary,
+                onTap: () => setState(() {
+                  if (isSelected) {
+                    _selectedReward = null;
+                  } else {
+                    _selectedReward = r;
+                    _selectedPackage = null;
+                  }
+                  // Reset time when service changes
+                  notifier.selectTime(const TimeOfDay(hour: 0, minute: 0));
+                }),
+              );
+            }),
+            const SizedBox(height: 12),
+          ],
+
+          // ── 4. Packages ───────────────────────────────────────────────────
+          if (_matchingPackages.isNotEmpty) ...[
+            _SectionLabel(
+              label: 'Tus sesiones de paquete',
+              icon: Icons.inventory_2_outlined,
+              color: AppTheme.primary,
+            ),
+            const SizedBox(height: 8),
+            ..._matchingPackages.map((p) {
+              final isSelected =
+                  _selectedPackage != null && _selectedPackage!['id'] == p['id'];
+              return _SelectableCard(
+                selected: isSelected,
+                selectedColor: AppTheme.primary,
+                icon: Icons.card_giftcard_outlined,
+                title: p['packageName'] as String? ?? '',
+                subtitle: _packageSubtitle(p),
+                badge: 'PAQUETE',
+                badgeColor: AppTheme.primary,
+                onTap: () => setState(() {
+                  if (isSelected) {
+                    _selectedPackage = null;
+                  } else {
+                    _selectedPackage = p;
+                    _selectedReward = null;
+                  }
+                }),
+              );
+            }),
+            const SizedBox(height: 12),
+          ],
+
+          // ── 5. Active service chip ────────────────────────────────────────
+          _ServiceChip(
+            name: _effectiveServiceName,
+            isReward: _selectedReward != null,
+            isPackage: _selectedPackage != null,
+            durationMinutes: booking.selectedService?.durationMinutes,
+          ),
+          const SizedBox(height: 20),
+
+          // ── 6. Calendar + time slots ──────────────────────────────────────
+          _SectionLabel(label: 'Fecha y hora', icon: Icons.calendar_today_outlined),
+          const SizedBox(height: 10),
+          if (isWide)
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Expanded(
+                child: _CalendarCard(
+                  focusedDay: _focusedDay,
+                  selectedDay: selectedDate,
+                  onDaySelected: (day) {
+                    setState(() => _focusedDay = day);
+                    notifier.selectDate(day);
+                    notifier.selectTime(const TimeOfDay(hour: 0, minute: 0));
+                  },
+                ),
+              ),
+              const SizedBox(width: 16),
               Expanded(
                 child: _TimeSlotsCard(
                   selectedDate: selectedDate,
                   selectedTime: selectedTime,
                   serviceId: effectiveSvcId,
-                  onTimeSelected: (time, _) => notifier.selectTime(time),
+                  onTimeSelected: (time) => notifier.selectTime(time),
                 ),
               ),
-            ],
-          )
-        else
-          Column(
-            children: [
+            ])
+          else
+            Column(children: [
               _CalendarCard(
                 focusedDay: _focusedDay,
                 selectedDay: selectedDate,
@@ -303,210 +598,353 @@ class _Step2DateTimeState extends ConsumerState<Step2DateTime> {
                   _scrollToTimeSlots();
                 },
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
               _TimeSlotsCard(
                 key: _timeSlotsKey,
                 selectedDate: selectedDate,
                 selectedTime: selectedTime,
                 serviceId: effectiveSvcId,
-                onTimeSelected: (time, _) => notifier.selectTime(time),
+                onTimeSelected: (time) => notifier.selectTime(time),
               ),
-            ],
-          ),
+            ]),
+          const SizedBox(height: 20),
 
-        const SizedBox(height: 28),
-        _BottomNav(
-          canContinue: canContinue,
-          onBack: notifier.back,
-          onNext: _handleContinue,
-          isReward: _selectedReward != null,
-        ),
-      ],
-    );
-  }
-}
-
-class _EmailLookupSection extends StatelessWidget {
-  final TextEditingController emailCtrl;
-  final bool lookingUp;
-  final bool lookupDone;
-  final String? lookupError;
-  final List<Map<String, dynamic>> pendingRewards;
-  final Map<String, dynamic>? selectedReward;
-  final VoidCallback onLookup;
-  final void Function(Map<String, dynamic>) onRewardSelected;
-
-  const _EmailLookupSection({
-    required this.emailCtrl,
-    required this.lookingUp,
-    required this.lookupDone,
-    required this.lookupError,
-    required this.pendingRewards,
-    required this.selectedReward,
-    required this.onLookup,
-    required this.onRewardSelected,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-            color: pendingRewards.isNotEmpty
-                ? AppTheme.secondary.withValues(alpha: 0.5)
-                : const Color(0xFFE8E8E8)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('¿Tienes una regalía o paquete?',
-              style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 14,
-                  color: AppTheme.primaryDark)),
-          const SizedBox(height: 4),
-          const Text('Ingresa tu correo para verificar',
-              style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: emailCtrl,
-                  keyboardType: TextInputType.emailAddress,
-                  onSubmitted: (_) => onLookup(),
-                  decoration: InputDecoration(
-                    hintText: 'tu@correo.com',
-                    prefixIcon: const Icon(Icons.email_outlined,
-                        color: AppTheme.primary, size: 18),
-                    isDense: true,
-                    filled: true,
-                    fillColor: AppTheme.background,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: AppTheme.primary, width: 2),
-                    ),
-                    errorText: lookupError,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              FilledButton(
-                onPressed: lookingUp ? null : onLookup,
-                style: FilledButton.styleFrom(
-                  backgroundColor: AppTheme.primary,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                ),
-                child: lookingUp
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Text('Verificar'),
-              ),
-            ],
-          ),
-          if (lookupDone && pendingRewards.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                const Icon(Icons.card_giftcard_outlined, color: AppTheme.secondary, size: 18),
-                const SizedBox(width: 6),
-                Text(
-                  '¡Tienes ${pendingRewards.length} regal${pendingRewards.length == 1 ? 'ía' : 'ías'} disponible${pendingRewards.length == 1 ? '' : 's'}!',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w700, fontSize: 13, color: AppTheme.secondary),
-                ),
-              ],
+          // ── 7. Notes ──────────────────────────────────────────────────────
+          TextFormField(
+            controller: _notesCtrl,
+            maxLines: 3,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: _inputDeco(
+              label: 'Notas adicionales (opcional)',
+              icon: Icons.note_outlined,
             ),
-            const SizedBox(height: 10),
-            ...pendingRewards.map((r) {
-              final isSelected = selectedReward != null && selectedReward!['id'] == r['id'];
-              final svcName = r['serviceName'] as String? ?? '';
-              final desc = r['description'] as String? ?? '';
-              return GestureDetector(
-                onTap: () => onRewardSelected(r),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? AppTheme.secondary.withValues(alpha: 0.12)
-                        : AppTheme.background,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                        color: isSelected ? AppTheme.secondary : const Color(0xFFE0E0E0),
-                        width: isSelected ? 2 : 1),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
-                        color: isSelected ? AppTheme.secondary : AppTheme.textSecondary,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(svcName,
-                                style: TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 13,
-                                    color: isSelected ? AppTheme.secondary : AppTheme.textPrimary)),
-                            if (desc.isNotEmpty) ...[
-                              const SizedBox(height: 2),
-                              Text(desc,
-                                  style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
-                            ],
-                          ],
-                        ),
-                      ),
-                      if (isSelected)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: AppTheme.secondary,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: const Text('SELECCIONADA',
-                              style: TextStyle(
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w800,
-                                  color: Colors.white,
-                                  letterSpacing: 0.5)),
-                        ),
-                    ],
-                  ),
-                ),
-              );
-            }),
-          ] else if (lookupDone && pendingRewards.isEmpty) ...[
-            const SizedBox(height: 10),
-            const Text(
-              'No se encontraron regalías pendientes para este correo.',
-              style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            '* Recibirás la confirmación por WhatsApp o correo electrónico.',
+            style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+          ),
+          const SizedBox(height: 24),
+
+          // ── 8. Confirm directly checkbox (admin) ─────────────────────────
+          CheckboxListTile(
+            value: _confirmDirectly,
+            onChanged: (v) => setState(() => _confirmDirectly = v ?? false),
+            title: const Text(
+              'Confirmar cita directamente',
+              style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
             ),
-          ],
+            controlAffinity: ListTileControlAffinity.leading,
+            activeColor: AppTheme.primary,
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+          ),
+          const SizedBox(height: 16),
+
+          // ── 9. Navigation ─────────────────────────────────────────────────
+          Row(children: [
+            OutlinedButton.icon(
+              onPressed: notifier.back,
+              icon: const Icon(Icons.arrow_back, size: 18),
+              label: const Text('Atrás'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppTheme.primary,
+                side: const BorderSide(color: AppTheme.primary),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+            const Spacer(),
+            FilledButton.icon(
+              onPressed: _submitting ? null : _submit,
+              icon: _submitting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : Icon(
+                      _selectedReward != null
+                          ? Icons.redeem_outlined
+                          : _selectedPackage != null
+                              ? Icons.card_giftcard_outlined
+                              : Icons.check,
+                      size: 18,
+                    ),
+              label: Text(_submitting
+                  ? 'Guardando...'
+                  : _selectedReward != null
+                      ? 'Canjear regalía'
+                      : _selectedPackage != null
+                          ? 'Usar sesión'
+                          : 'Solicitar cita'),
+              style: FilledButton.styleFrom(
+                backgroundColor: _selectedReward != null
+                    ? AppTheme.secondary
+                    : AppTheme.primary,
+                disabledBackgroundColor: AppTheme.primaryLight,
+                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 32),
         ],
       ),
     );
   }
+
+  // ── Form helpers ──────────────────────────────────────────────────────────
+
+  String? _packageSubtitle(Map<String, dynamic> pkg) {
+    final serviceId = ref.read(bookingProvider).selectedService?.id ?? '';
+    final services = (pkg['services'] as List<dynamic>? ?? [])
+        .cast<Map<String, dynamic>>();
+    final svcEntry = services.firstWhere(
+        (s) => s['serviceId'] == serviceId, orElse: () => {});
+    if (svcEntry.isEmpty) return null;
+    final remaining = (svcEntry['totalSessions'] as num? ?? 0).toInt() -
+        (svcEntry['usedSessions'] as num? ?? 0).toInt();
+    return "$remaining sesión${remaining == 1 ? '' : 'es'} disponible${remaining == 1 ? '' : 's'}";
+  }
+
+  Widget _nameField() => TextFormField(
+        controller: _nameCtrl,
+        textCapitalization: TextCapitalization.words,
+        decoration: _inputDeco(label: 'Nombre', icon: Icons.person_outline),
+        validator: (v) =>
+            (v == null || v.trim().isEmpty) ? 'Ingresa tu nombre' : null,
+      );
+
+  Widget _lastNameField() => TextFormField(
+        controller: _lastNameCtrl,
+        textCapitalization: TextCapitalization.words,
+        decoration: _inputDeco(label: 'Apellidos', icon: Icons.person_outline),
+        validator: (v) =>
+            (v == null || v.trim().isEmpty) ? 'Ingresa tus apellidos' : null,
+      );
+
+  Widget _phoneField() => TextFormField(
+        controller: _phoneCtrl,
+        keyboardType: TextInputType.phone,
+        decoration:
+            _inputDeco(label: 'Teléfono / WhatsApp', icon: Icons.phone_outlined),
+        validator: (v) => (v == null || v.trim().isEmpty)
+            ? 'Por favor ingresa tu teléfono'
+            : null,
+      );
+
+  InputDecoration _inputDeco({required String label, required IconData icon}) =>
+      InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon, color: AppTheme.primary, size: 20),
+        filled: true,
+        fillColor: AppTheme.surface,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppTheme.primary, width: 2),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppTheme.error),
+        ),
+        labelStyle: const TextStyle(color: AppTheme.textSecondary),
+      );
 }
+
+// ---------------------------------------------------------------------------
+// Section label
+// ---------------------------------------------------------------------------
+
+class _SectionLabel extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  const _SectionLabel({
+    required this.label,
+    required this.icon,
+    this.color = AppTheme.primaryDark,
+  });
+
+  @override
+  Widget build(BuildContext context) => Row(children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 6),
+        Text(label,
+            style: TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 14,
+                color: color)),
+      ]);
+}
+
+// ---------------------------------------------------------------------------
+// Selectable card (reward / package)
+// ---------------------------------------------------------------------------
+
+class _SelectableCard extends StatelessWidget {
+  final bool selected;
+  final Color selectedColor;
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final String badge;
+  final Color badgeColor;
+  final VoidCallback onTap;
+
+  const _SelectableCard({
+    required this.selected,
+    required this.selectedColor,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.badge,
+    required this.badgeColor,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: selected
+                ? selectedColor.withValues(alpha: 0.08)
+                : AppTheme.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+                color: selected ? selectedColor : const Color(0xFFE0E0E0),
+                width: selected ? 2 : 1),
+          ),
+          child: Row(children: [
+            Icon(
+              selected ? Icons.check_circle : Icons.radio_button_unchecked,
+              color: selected ? selectedColor : AppTheme.textSecondary,
+              size: 22,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                          color: selected
+                              ? selectedColor
+                              : AppTheme.textPrimary)),
+                  if (subtitle != null && subtitle!.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(subtitle!,
+                        style: const TextStyle(
+                            fontSize: 12, color: AppTheme.textSecondary)),
+                  ],
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                  color: badgeColor, borderRadius: BorderRadius.circular(6)),
+              child: Text(badge,
+                  style: const TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                      letterSpacing: 0.5)),
+            ),
+          ]),
+        ),
+      );
+}
+
+// ---------------------------------------------------------------------------
+// Service chip
+// ---------------------------------------------------------------------------
+
+class _ServiceChip extends StatelessWidget {
+  final String name;
+  final bool isReward;
+  final bool isPackage;
+  final int? durationMinutes;
+  const _ServiceChip({
+    required this.name,
+    required this.isReward,
+    required this.isPackage,
+    this.durationMinutes,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isReward ? AppTheme.secondary : AppTheme.primary;
+    final bgColor = isReward
+        ? AppTheme.secondary.withValues(alpha: 0.1)
+        : AppTheme.primaryLight.withValues(alpha: 0.3);
+    final borderColor = isReward
+        ? AppTheme.secondary.withValues(alpha: 0.5)
+        : AppTheme.primaryLight;
+    final icon = isReward
+        ? Icons.redeem_outlined
+        : isPackage
+            ? Icons.card_giftcard_outlined
+            : Icons.spa_outlined;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 18, color: color),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(name,
+              style: TextStyle(
+                  fontWeight: FontWeight.w600, color: color)),
+        ),
+        if (isReward || isPackage) ...[
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+                color: color, borderRadius: BorderRadius.circular(6)),
+            child: Text(isReward ? 'REGALÍA' : 'PAQUETE',
+                style: const TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                    letterSpacing: 0.5)),
+          ),
+        ] else if (durationMinutes != null) ...[
+          const SizedBox(width: 8),
+          Text('· $durationMinutes min',
+              style:
+                  const TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+        ],
+      ]),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Calendar card
+// ---------------------------------------------------------------------------
 
 class _CalendarCard extends StatelessWidget {
   final DateTime focusedDay;
@@ -532,7 +970,8 @@ class _CalendarCard extends StatelessWidget {
         firstDay: now,
         lastDay: now.add(const Duration(days: 90)),
         focusedDay: focusedDay,
-        selectedDayPredicate: (d) => selectedDay != null && isSameDay(d, selectedDay!),
+        selectedDayPredicate: (d) =>
+            selectedDay != null && isSameDay(d, selectedDay!),
         onDaySelected: (selected, _) => onDaySelected(selected),
         enabledDayPredicate: (day) =>
             day.weekday != DateTime.sunday && !day.isBefore(now),
@@ -542,9 +981,13 @@ class _CalendarCard extends StatelessWidget {
           titleCentered: true,
           formatButtonVisible: false,
           titleTextStyle: TextStyle(
-              fontWeight: FontWeight.w600, fontSize: 15, color: AppTheme.textPrimary),
-          leftChevronIcon: Icon(Icons.chevron_left, color: AppTheme.primary),
-          rightChevronIcon: Icon(Icons.chevron_right, color: AppTheme.primary),
+              fontWeight: FontWeight.w600,
+              fontSize: 15,
+              color: AppTheme.textPrimary),
+          leftChevronIcon:
+              Icon(Icons.chevron_left, color: AppTheme.primary),
+          rightChevronIcon:
+              Icon(Icons.chevron_right, color: AppTheme.primary),
         ),
         daysOfWeekStyle: const DaysOfWeekStyle(
           weekdayStyle: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
@@ -552,22 +995,31 @@ class _CalendarCard extends StatelessWidget {
         ),
         calendarStyle: CalendarStyle(
           outsideDaysVisible: false,
-          todayDecoration: BoxDecoration(color: AppTheme.primaryLight, shape: BoxShape.circle),
-          selectedDecoration: const BoxDecoration(color: AppTheme.primary, shape: BoxShape.circle),
-          disabledTextStyle: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 13),
-          defaultTextStyle: const TextStyle(color: AppTheme.textPrimary, fontSize: 13),
-          weekendTextStyle: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+          todayDecoration: BoxDecoration(
+              color: AppTheme.primaryLight, shape: BoxShape.circle),
+          selectedDecoration: const BoxDecoration(
+              color: AppTheme.primary, shape: BoxShape.circle),
+          disabledTextStyle:
+              const TextStyle(color: Color(0xFFCCCCCC), fontSize: 13),
+          defaultTextStyle:
+              const TextStyle(color: AppTheme.textPrimary, fontSize: 13),
+          weekendTextStyle:
+              const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
         ),
       ),
     );
   }
 }
 
+// ---------------------------------------------------------------------------
+// Time slots card
+// ---------------------------------------------------------------------------
+
 class _TimeSlotsCard extends ConsumerWidget {
   final DateTime? selectedDate;
   final TimeOfDay? selectedTime;
   final String? serviceId;
-  final void Function(TimeOfDay, String) onTimeSelected;
+  final void Function(TimeOfDay) onTimeSelected;
 
   const _TimeSlotsCard({
     super.key,
@@ -577,15 +1029,15 @@ class _TimeSlotsCard extends ConsumerWidget {
     required this.onTimeSelected,
   });
 
-  TimeOfDay _parse24(String slot) {
-    final parts = slot.split(':');
-    return TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+  TimeOfDay _parse(String slot) {
+    final p = slot.split(':');
+    return TimeOfDay(hour: int.parse(p[0]), minute: int.parse(p[1]));
   }
 
-  String _formatAmPm(String slot) {
-    final parts = slot.split(':');
-    int h = int.parse(parts[0]);
-    final m = parts[1];
+  String _fmt(String slot) {
+    final p = slot.split(':');
+    int h = int.parse(p[0]);
+    final m = p[1];
     final period = h >= 12 ? 'PM' : 'AM';
     h = h % 12;
     if (h == 0) h = 12;
@@ -594,213 +1046,199 @@ class _TimeSlotsCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    if (selectedDate == null) {
+    if (selectedDate == null || serviceId == null) {
       return Container(
         padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
-          color: AppTheme.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFE8E8E8)),
-        ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFE8E8E8))),
         child: const Center(
-          child: Column(
-            children: [
-              Icon(Icons.calendar_today_outlined, color: AppTheme.primaryLight, size: 40),
-              SizedBox(height: 12),
-              Text('Selecciona una fecha primero',
-                  style: TextStyle(color: AppTheme.textSecondary),
-                  textAlign: TextAlign.center),
-            ],
-          ),
+          child: Column(children: [
+            Icon(Icons.calendar_today_outlined,
+                color: AppTheme.primaryLight, size: 36),
+            SizedBox(height: 10),
+            Text('Selecciona una fecha primero',
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+                textAlign: TextAlign.center),
+          ]),
         ),
       );
     }
 
-    if (serviceId == null) return const SizedBox.shrink();
-
     final d = selectedDate!;
     final dateStr =
-        '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+        "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
     final slotsAsync =
         ref.watch(_availableSlotsProvider((date: dateStr, serviceId: serviceId!)));
-    final dateLabel = DateFormat("EEEE d 'de' MMMM", 'es').format(selectedDate!);
+    final dateLabel =
+        DateFormat("EEEE d 'de' MMMM", 'es_MX').format(selectedDate!);
 
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE8E8E8)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(dateLabel,
-              style: const TextStyle(
-                  fontWeight: FontWeight.w600, fontSize: 14, color: AppTheme.primaryDark)),
-          const SizedBox(height: 4),
-          const Text('Horarios disponibles',
-              style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
-          const SizedBox(height: 14),
-          slotsAsync.when(
-            loading: () => const Center(
-                child: Padding(
-                    padding: EdgeInsets.all(16), child: CircularProgressIndicator())),
-            error: (e, _) =>
-                Text('Error al cargar horarios: $e',
-                    style: const TextStyle(color: AppTheme.error, fontSize: 13)),
-            data: (slots) {
-              if (slots.isEmpty) {
-                return const Padding(
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE8E8E8))),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(_capitalize(dateLabel),
+            style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+                color: AppTheme.primaryDark)),
+        const SizedBox(height: 4),
+        const Text('Horarios disponibles',
+            style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+        const SizedBox(height: 14),
+        slotsAsync.when(
+          loading: () => const Center(
+              child: Padding(
                   padding: EdgeInsets.all(16),
-                  child: Text('No hay horarios disponibles para este día.',
-                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
-                      textAlign: TextAlign.center),
-                );
-              }
-              return Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: slots.map((slot) {
-                  final time = _parse24(slot);
-                  final isSelected = selectedTime != null &&
-                      selectedTime!.hour == time.hour &&
-                      selectedTime!.minute == time.minute;
-                  return _TimeChip(
-                    label: _formatAmPm(slot),
-                    selected: isSelected,
-                    disabled: false,
-                    onTap: () => onTimeSelected(time, slot),
-                  );
-                }).toList(),
+                  child: CircularProgressIndicator())),
+          error: (e, _) => Text('Error al cargar horarios: $e',
+              style: const TextStyle(color: AppTheme.error, fontSize: 13)),
+          data: (slots) {
+            if (slots.isEmpty) {
+              return const Padding(
+                padding: EdgeInsets.all(8),
+                child: Text('No hay horarios disponibles para este día.',
+                    style:
+                        TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+                    textAlign: TextAlign.center),
               );
-            },
-          ),
-        ],
-      ),
+            }
+            return Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: slots.map((slot) {
+                final time = _parse(slot);
+                final isSelected = selectedTime != null &&
+                    selectedTime!.hour == time.hour &&
+                    selectedTime!.minute == time.minute;
+                return _TimeChip(
+                  label: _fmt(slot),
+                  selected: isSelected,
+                  onTap: () => onTimeSelected(time),
+                );
+              }).toList(),
+            );
+          },
+        ),
+      ]),
     );
   }
+
+  String _capitalize(String s) =>
+      s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : s;
 }
 
 class _TimeChip extends StatelessWidget {
   final String label;
   final bool selected;
-  final bool disabled;
-  final VoidCallback? onTap;
-
-  const _TimeChip({
-    required this.label,
-    required this.selected,
-    required this.disabled,
-    this.onTap,
-  });
+  final VoidCallback onTap;
+  const _TimeChip(
+      {required this.label, required this.selected, required this.onTap});
 
   @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: selected
-              ? AppTheme.primary
-              : disabled
-                  ? const Color(0xFFF0F0F0)
-                  : AppTheme.surface,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: selected
-                ? AppTheme.primary
-                : disabled
-                    ? const Color(0xFFE0E0E0)
-                    : AppTheme.primaryLight,
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: selected ? AppTheme.primary : AppTheme.surface,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+                color: selected ? AppTheme.primary : AppTheme.primaryLight),
           ),
+          child: Text(label,
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight:
+                      selected ? FontWeight.w600 : FontWeight.normal,
+                  color: selected ? Colors.white : AppTheme.textPrimary)),
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-            color: selected
-                ? Colors.white
-                : disabled
-                    ? const Color(0xFFBBBBBB)
-                    : AppTheme.textPrimary,
-            decoration: disabled ? TextDecoration.lineThrough : null,
-          ),
-        ),
-      ),
-    );
-  }
+      );
 }
 
-class _BottomNav extends StatelessWidget {
-  final bool canContinue;
-  final bool isReward;
-  final VoidCallback onBack;
-  final VoidCallback onNext;
+// ---------------------------------------------------------------------------
+// OTP Dialog — reusable for reward & package
+// ---------------------------------------------------------------------------
 
-  const _BottomNav({
-    required this.canContinue,
-    required this.onBack,
-    required this.onNext,
-    this.isReward = false,
-  });
+typedef _OnVerifiedCallback = Future<void> Function(
+    String clientId, Map<String, dynamic> clientData);
 
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        OutlinedButton.icon(
-          onPressed: onBack,
-          icon: const Icon(Icons.arrow_back, size: 18),
-          label: const Text('Atrás'),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: AppTheme.primary,
-            side: const BorderSide(color: AppTheme.primary),
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        ),
-        const Spacer(),
-        FilledButton.icon(
-          onPressed: canContinue ? onNext : null,
-          icon: Icon(isReward ? Icons.redeem_outlined : Icons.arrow_forward, size: 18),
-          label: Text(isReward ? 'Canjear regalía' : 'Continuar'),
-          style: FilledButton.styleFrom(
-            backgroundColor: isReward ? AppTheme.secondary : AppTheme.primary,
-            disabledBackgroundColor: AppTheme.primaryLight,
-            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        ),
-      ],
-    );
-  }
-}
+enum _OtpPhase { sending, verify, submitting }
 
-enum _RwdOtpPhase { sending, verify, booking }
-
-class _RewardOtpDialog extends ConsumerStatefulWidget {
-  final String email;
-  final String clientId;
+class _RewardChip extends StatelessWidget {
   final Map<String, dynamic> reward;
-  final String serviceId;
+  const _RewardChip({required this.reward});
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+            color: AppTheme.secondary.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(8)),
+        child: Row(children: [
+          const Icon(Icons.card_giftcard_outlined,
+              color: AppTheme.secondary, size: 16),
+          const SizedBox(width: 8),
+          Expanded(
+              child: Text(reward['serviceName'] as String? ?? '',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                      color: AppTheme.primaryDark))),
+        ]),
+      );
+}
 
-  const _RewardOtpDialog({
+class _PackageChip extends StatelessWidget {
+  final Map<String, dynamic> pkg;
+  const _PackageChip({required this.pkg});
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+            color: AppTheme.primaryLight.withValues(alpha: 0.3),
+            borderRadius: BorderRadius.circular(8)),
+        child: Row(children: [
+          const Icon(Icons.inventory_2_outlined,
+              color: AppTheme.primary, size: 16),
+          const SizedBox(width: 8),
+          Expanded(
+              child: Text(pkg['packageName'] as String? ?? '',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                      color: AppTheme.primaryDark))),
+        ]),
+      );
+}
+
+class _OtpDialog extends StatefulWidget {
+  final String email;
+  final String title;
+  final IconData icon;
+  final Color iconColor;
+  final Widget descriptionWidget;
+  final _OnVerifiedCallback onVerified;
+
+  const _OtpDialog({
     required this.email,
-    required this.clientId,
-    required this.reward,
-    required this.serviceId,
+    required this.title,
+    required this.icon,
+    required this.iconColor,
+    required this.descriptionWidget,
+    required this.onVerified,
   });
 
   @override
-  ConsumerState<_RewardOtpDialog> createState() => _RewardOtpDialogState();
+  State<_OtpDialog> createState() => _OtpDialogState();
 }
 
-class _RewardOtpDialogState extends ConsumerState<_RewardOtpDialog> {
-  _RwdOtpPhase _phase = _RwdOtpPhase.sending;
+class _OtpDialogState extends State<_OtpDialog> {
+  _OtpPhase _phase = _OtpPhase.sending;
   final _otpCtrl = TextEditingController();
   String? _error;
 
@@ -817,20 +1255,17 @@ class _RewardOtpDialogState extends ConsumerState<_RewardOtpDialog> {
   }
 
   Future<void> _sendOtp() async {
-    setState(() {
-      _phase = _RwdOtpPhase.sending;
-      _error = null;
-    });
+    setState(() { _phase = _OtpPhase.sending; _error = null; });
     try {
       await FirebaseFunctions.instanceFor(region: 'us-central1')
           .httpsCallable('sendVerificationCode')
           .call({'email': widget.email});
-      if (mounted) setState(() => _phase = _RwdOtpPhase.verify);
+      if (mounted) setState(() => _phase = _OtpPhase.verify);
     } catch (_) {
       if (mounted) {
         setState(() {
           _error = 'Error al enviar código. Intenta de nuevo.';
-          _phase = _RwdOtpPhase.verify;
+          _phase = _OtpPhase.verify;
         });
       }
     }
@@ -839,36 +1274,15 @@ class _RewardOtpDialogState extends ConsumerState<_RewardOtpDialog> {
   Future<void> _verify() async {
     final code = _otpCtrl.text.trim();
     if (code.length != 6) return;
-    setState(() {
-      _phase = _RwdOtpPhase.booking;
-      _error = null;
-    });
+    setState(() { _phase = _OtpPhase.submitting; _error = null; });
     try {
       final verifyResult = await FirebaseFunctions.instanceFor(region: 'us-central1')
           .httpsCallable('verifyClientCode')
           .call<Map<String, dynamic>>({'email': widget.email, 'code': code});
       final clientId = verifyResult.data['clientId'] as String;
-      final clientData = verifyResult.data['client'] as Map<String, dynamic>? ?? {};
-
-      final booking = ref.read(bookingProvider);
-      final date = booking.selectedDate!;
-      final time = booking.selectedTime!;
-      final dateStr =
-          '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-      final timeStr =
-          '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
-
-      await FirebaseFunctions.instanceFor(region: 'us-central1')
-          .httpsCallable('createRewardAppointment')
-          .call<Map<String, dynamic>>({
-        'clientId': clientId,
-        'rewardId': widget.reward['id'] as String,
-        'serviceId': widget.serviceId,
-        'serviceName': widget.reward['serviceName'] as String? ?? '',
-        'date': dateStr,
-        'time': timeStr,
-      });
-
+      final clientData =
+          verifyResult.data['client'] as Map<String, dynamic>? ?? {};
+      await widget.onVerified(clientId, clientData);
       if (mounted) {
         Navigator.of(context).pop({
           'clientCode': clientData['clientCode'] as String? ?? '',
@@ -877,30 +1291,29 @@ class _RewardOtpDialogState extends ConsumerState<_RewardOtpDialog> {
               clientData['name'] as String? ?? '',
           'lastName': clientData['lastName'] as String? ?? '',
           'phone': clientData['phone'] as String? ?? '',
-          'email': widget.email,
         });
       }
     } on FirebaseFunctionsException catch (e) {
       if (mounted) {
         setState(() {
-          _error = e.message ?? 'Error al procesar. Intenta de nuevo.';
-          _phase = _RwdOtpPhase.verify;
+          _error = e.message ?? 'Error. Intenta de nuevo.';
+          _phase = _OtpPhase.verify;
         });
       }
     } catch (e) {
       if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _phase = _RwdOtpPhase.verify;
-        });
+        setState(() { _error = e.toString(); _phase = _OtpPhase.verify; });
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final isBusy = _phase == _RwdOtpPhase.sending || _phase == _RwdOtpPhase.booking;
-    final svcName = widget.reward['serviceName'] as String? ?? '';
+    final isBusy =
+        _phase == _OtpPhase.sending || _phase == _OtpPhase.submitting;
+    final busyMsg = _phase == _OtpPhase.sending
+        ? 'Enviando código de verificación...'
+        : 'Procesando tu cita...';
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -913,59 +1326,32 @@ class _RewardOtpDialogState extends ConsumerState<_RewardOtpDialog> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Row(children: [
-                const Icon(Icons.redeem_outlined, color: AppTheme.secondary),
+                Icon(widget.icon, color: widget.iconColor),
                 const SizedBox(width: 10),
-                const Expanded(
-                  child: Text('Canjear regalía',
-                      style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 16,
-                          color: AppTheme.primaryDark)),
-                ),
+                Expanded(
+                    child: Text(widget.title,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 16,
+                            color: AppTheme.primaryDark))),
                 if (!isBusy)
                   IconButton(
                       onPressed: () => Navigator.of(context).pop(),
                       icon: const Icon(Icons.close, size: 20)),
               ]),
               const Divider(height: 20),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppTheme.secondary.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(children: [
-                  const Icon(Icons.card_giftcard_outlined, color: AppTheme.secondary, size: 16),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(svcName,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 13,
-                            color: AppTheme.primaryDark)),
-                  ),
-                ]),
-              ),
+              widget.descriptionWidget,
               const SizedBox(height: 16),
-              if (_phase == _RwdOtpPhase.sending)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 16),
+              if (isBusy)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
                   child: Column(children: [
-                    CircularProgressIndicator(color: AppTheme.secondary, strokeWidth: 2),
-                    SizedBox(height: 12),
-                    Text('Enviando código de verificación...',
-                        style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
-                        textAlign: TextAlign.center),
-                  ]),
-                )
-              else if (_phase == _RwdOtpPhase.booking)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 16),
-                  child: Column(children: [
-                    CircularProgressIndicator(color: AppTheme.secondary, strokeWidth: 2),
-                    SizedBox(height: 12),
-                    Text('Agendando tu cita con regalía...',
-                        style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+                    CircularProgressIndicator(
+                        color: widget.iconColor, strokeWidth: 2),
+                    const SizedBox(height: 12),
+                    Text(busyMsg,
+                        style: const TextStyle(
+                            color: AppTheme.textSecondary, fontSize: 13),
                         textAlign: TextAlign.center),
                   ]),
                 )
@@ -973,13 +1359,16 @@ class _RewardOtpDialogState extends ConsumerState<_RewardOtpDialog> {
                 RichText(
                   textAlign: TextAlign.center,
                   text: TextSpan(
-                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+                    style: const TextStyle(
+                        color: AppTheme.textSecondary, fontSize: 13),
                     children: [
-                      const TextSpan(text: 'Enviamos un código de 6 dígitos a '),
+                      const TextSpan(
+                          text: 'Enviamos un código de 6 dígitos a '),
                       TextSpan(
                           text: widget.email,
                           style: const TextStyle(
-                              color: AppTheme.primaryDark, fontWeight: FontWeight.w600)),
+                              color: AppTheme.primaryDark,
+                              fontWeight: FontWeight.w600)),
                     ],
                   ),
                 ),
@@ -991,42 +1380,50 @@ class _RewardOtpDialogState extends ConsumerState<_RewardOtpDialog> {
                   autofocus: true,
                   textAlign: TextAlign.center,
                   style: const TextStyle(
-                      fontSize: 28, letterSpacing: 10, fontWeight: FontWeight.w700),
+                      fontSize: 28,
+                      letterSpacing: 10,
+                      fontWeight: FontWeight.w700),
                   decoration: InputDecoration(
                     labelText: 'Código',
                     hintText: '123456',
-                    prefixIcon: const Icon(Icons.pin_outlined, color: AppTheme.secondary, size: 20),
+                    prefixIcon: Icon(Icons.pin_outlined,
+                        color: widget.iconColor, size: 20),
                     filled: true,
                     fillColor: AppTheme.surface,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12)),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: AppTheme.secondary, width: 2),
+                      borderSide:
+                          BorderSide(color: widget.iconColor, width: 2),
                     ),
                   ),
                 ),
                 if (_error != null) ...[
                   const SizedBox(height: 8),
                   Text(_error!,
-                      style: const TextStyle(color: AppTheme.error, fontSize: 13),
+                      style: const TextStyle(
+                          color: AppTheme.error, fontSize: 13),
                       textAlign: TextAlign.center),
                 ],
                 const SizedBox(height: 16),
                 FilledButton(
                   onPressed: _verify,
                   style: FilledButton.styleFrom(
-                    backgroundColor: AppTheme.secondary,
+                    backgroundColor: widget.iconColor,
                     padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                   ),
-                  child: const Text('Verificar y canjear',
+                  child: const Text('Verificar y confirmar',
                       style: TextStyle(fontWeight: FontWeight.w600)),
                 ),
                 const SizedBox(height: 8),
                 TextButton(
                   onPressed: _sendOtp,
                   child: const Text('Reenviar código',
-                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+                      style: TextStyle(
+                          color: AppTheme.textSecondary, fontSize: 13)),
                 ),
               ],
             ],
