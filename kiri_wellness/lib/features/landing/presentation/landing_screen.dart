@@ -15,8 +15,8 @@ const _kOlive      = Color(0xFF4A5240); // dark olive green
 const _kTaupe      = Color(0xFF9B8B7A); // warm taupe
 const _kLavender   = Color(0xFF9D87BC); // soft lavender/purple
 const _kLavLight   = Color(0xFFD4C8E8); // lavender light
-const _kCream      = Color(0xFFF0EBE0); // warm cream background
-const _kCreamDark  = Color(0xFFE6DFCF); // slightly darker cream
+const _kCream      = Color(0xFFFBF8F3); // lighter warm cream background
+const _kCreamDark  = Color(0xFFF3ECE2); // lighter cream for subtle contrast
 // ─────────────────────────────────────────────────────────────────────────────
 
 class LandingScreen extends StatelessWidget {
@@ -61,8 +61,8 @@ class _HeroSection extends StatelessWidget {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            const Color(0xFFF5EFE6),
-            const Color(0xFFEDE3D7),
+            const Color(0xFFFCF9F4),
+            const Color(0xFFF6EFE5),
           ],
         ),
       ),
@@ -76,11 +76,11 @@ class _HeroSection extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Expanded(
-                    flex: 5,
+                    flex: 4,
                     child: Align(
                       alignment: Alignment.centerLeft,
                       child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 480),
+                        constraints: const BoxConstraints(maxWidth: 460),
                         child: Image.asset(
                           'assets/images/kiriwellness.png',
                           fit: BoxFit.contain,
@@ -88,13 +88,20 @@ class _HeroSection extends StatelessWidget {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 56),
+                  const SizedBox(width: 46),
                   Expanded(
-                    flex: 6,
-                    child: _HeroText(
-                      onBook: onBook,
-                      centered: false,
-                      showLogo: false,
+                    flex: 8,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _HeroText(
+                          onBook: onBook,
+                          centered: false,
+                          showLogo: false,
+                        ),
+                        const SizedBox(height: 28),
+                        const _HeroMassageImage(),
+                      ],
                     ),
                   ),
                 ],
@@ -178,6 +185,63 @@ class _HeroText extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+class _HeroMassageImage extends StatelessWidget {
+  const _HeroMassageImage();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(maxWidth: 640),
+      height: 250,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _kTaupe.withValues(alpha: 0.12)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.012),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.network(
+              'https://images.unsplash.com/photo-1544161515-4ab6ce6db874?auto=format&fit=crop&w=1600&q=80',
+              fit: BoxFit.cover,
+              alignment: Alignment.center,
+              errorBuilder: (_, __, ___) => Container(
+                color: _kCreamDark,
+                alignment: Alignment.center,
+                child: Text(
+                  'Imagen no disponible',
+                  style: GoogleFonts.lato(color: _kTaupe),
+                ),
+              ),
+            ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: Alignment.center,
+                  colors: [
+                    _kOlive.withValues(alpha: 0.24),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -352,7 +416,7 @@ class _PackagesSection extends StatelessWidget {
     final isWide = MediaQuery.of(context).size.width >= 800;
     return Container(
       width: double.infinity,
-      color: _kOlive.withValues(alpha: 0.06),
+      color: _kCream,
       padding: EdgeInsets.symmetric(horizontal: isWide ? 80 : 24, vertical: 88),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -874,7 +938,7 @@ class _ContactSection extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Color(0xFFF5EFE6), Color(0xFFEDE3D7)],
+          colors: [Color(0xFFFCF9F4), Color(0xFFF7F0E7)],
         ),
       ),
       padding: EdgeInsets.symmetric(horizontal: isWide ? 80 : 24, vertical: 88),
