@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 // ignore: avoid_web_libraries_in_flutter
 import 'dart:html' as html;
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -53,7 +54,7 @@ class _HeroSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isWide = MediaQuery.of(context).size.width >= 900;
+    final isDesktop = MediaQuery.of(context).size.width >= 1100;
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -68,16 +69,44 @@ class _HeroSection extends StatelessWidget {
       ),
       child: Padding(
         padding: EdgeInsets.symmetric(
-          horizontal: isWide ? 80 : 24,
-          vertical: isWide ? 88 : 64,
+          horizontal: isDesktop ? 80 : 24,
+          vertical: isDesktop ? 92 : 64,
         ),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
-            child: _HeroText(onBook: onBook, centered: false),
-          ),
-        ),
+        child: isDesktop
+            ? Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    flex: 5,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 480),
+                        child: Image.asset(
+                          'assets/images/kiriwellness.png',
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 56),
+                  Expanded(
+                    flex: 6,
+                    child: _HeroText(
+                      onBook: onBook,
+                      centered: false,
+                      showLogo: false,
+                    ),
+                  ),
+                ],
+              )
+            : Align(
+                alignment: Alignment.centerLeft,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 760),
+                  child: _HeroText(onBook: onBook, centered: false),
+                ),
+              ),
       ),
     );
   }
@@ -86,7 +115,8 @@ class _HeroSection extends StatelessWidget {
 class _HeroText extends StatelessWidget {
   final VoidCallback onBook;
   final bool centered;
-  const _HeroText({required this.onBook, this.centered = false});
+  final bool showLogo;
+  const _HeroText({required this.onBook, this.centered = false, this.showLogo = true});
 
   @override
   Widget build(BuildContext context) {
@@ -96,20 +126,22 @@ class _HeroText extends StatelessWidget {
           centered ? CrossAxisAlignment.center : CrossAxisAlignment.start,
       children: [
         // Brand logo — constrain by width for landscape PNG
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Image.asset(
-            'assets/images/kiriwellness.png',
-            fit: BoxFit.contain,
+        if (showLogo) ...[
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Image.asset(
+              'assets/images/kiriwellness.png',
+              fit: BoxFit.contain,
+            ),
           ),
-        ),
-        const SizedBox(height: 36),
+          const SizedBox(height: 36),
+        ],
         Text(
           'Tu momento de\nbienestar comienza aquí',
           textAlign: centered ? TextAlign.center : TextAlign.start,
           style: GoogleFonts.cormorantGaramond(
             color: _kOlive,
-            fontSize: isWide ? 64 : 46,
+            fontSize: isWide ? 58 : 44,
             fontWeight: FontWeight.w700,
             height: 1.1,
           ),
@@ -254,8 +286,67 @@ class _ServiceGrid extends StatelessWidget {
   final int columns;
   const _ServiceGrid({required this.services, required this.columns});
 
+  double _measureTextHeight(
+    String text,
+    TextStyle style,
+    double maxWidth, {
+    int? maxLines,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+      maxLines: maxLines,
+    )..layout(maxWidth: maxWidth);
+    return painter.height;
+  }
+
+  double _desktopCardHeight(BuildContext context, double cardWidth) {
+    final nameStyle = GoogleFonts.cormorantGaramond(
+      fontSize: 20,
+      fontWeight: FontWeight.w700,
+      color: _kOlive,
+    );
+    final descriptionStyle = GoogleFonts.lato(
+      fontSize: 13,
+      color: _kTaupe,
+      height: 1.65,
+    );
+
+    double maxHeight = 0;
+    for (final service in services) {
+      final titleHeight = _measureTextHeight(
+        service.name,
+        nameStyle,
+        cardWidth - 48,
+      );
+      final descriptionHeight = service.description.isNotEmpty
+          ? _measureTextHeight(
+              service.description,
+              descriptionStyle,
+              cardWidth - 48,
+            )
+          : 0;
+
+      final height =
+          24 + // padding top
+          48 + // icon block
+          16 + // icon to title gap
+          titleHeight +
+          8 +
+          descriptionHeight +
+          (service.description.isNotEmpty ? 12 : 0) +
+          40 + // chip row space
+          24; // padding bottom
+
+      maxHeight = math.max(maxHeight, height);
+    }
+
+    return maxHeight.clamp(360.0, 640.0);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isDesktop = MediaQuery.of(context).size.width >= 1100;
     return Wrap(
       spacing: 20,
       runSpacing: 20,
@@ -264,7 +355,12 @@ class _ServiceGrid extends StatelessWidget {
                 (MediaQuery.of(context).size.width >= 800 ? 160 : 48) -
                 (columns - 1) * 20) /
             columns;
-        return SizedBox(width: width.clamp(240, 400), child: _ServiceCard(service: s));
+        final cardWidth = width.clamp(240, 400).toDouble();
+        return SizedBox(
+          width: cardWidth,
+          height: isDesktop ? _desktopCardHeight(context, cardWidth) : null,
+          child: _ServiceCard(service: s, isDesktop: isDesktop),
+        );
       }).toList(),
     );
   }
@@ -272,18 +368,20 @@ class _ServiceGrid extends StatelessWidget {
 
 class _ServiceCard extends StatelessWidget {
   final ServiceModel service;
-  const _ServiceCard({required this.service});
+  final bool isDesktop;
+  const _ServiceCard({required this.service, this.isDesktop = false});
 
   @override
   Widget build(BuildContext context) {
     return Container(
+      height: isDesktop ? double.infinity : null,
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _kCreamDark),
-        boxShadow: [BoxShadow(color: _kOlive.withValues(alpha: 0.06),
-            blurRadius: 16, offset: const Offset(0, 4))],
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _kTaupe.withValues(alpha: 0.18)),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 12, offset: const Offset(0, 4))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -303,9 +401,11 @@ class _ServiceCard extends StatelessWidget {
           const SizedBox(height: 8),
           if (service.description.isNotEmpty) ...[
             Text(service.description,
+                softWrap: true,
                 style: GoogleFonts.lato(fontSize: 13, color: _kTaupe, height: 1.65)),
             const SizedBox(height: 12),
           ],
+          if (isDesktop) const Spacer(),
           Wrap(spacing: 8, runSpacing: 8, children: [
             _Chip(icon: Icons.schedule_outlined, label: '${service.durationMinutes} min'),
             if (service.price > 0)
@@ -369,6 +469,7 @@ class _PackageLandingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final w = MediaQuery.of(context).size.width;
+    final isDesktop = w >= 1100;
     final cardWidth = (w >= 800
             ? (w - 160 - 40) / 3
             : (w >= 540 ? (w - 48 - 20) / 2 : w - 48))
@@ -376,13 +477,14 @@ class _PackageLandingCard extends StatelessWidget {
 
     return Container(
       width: cardWidth,
+      height: isDesktop ? 360 : null,
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _kLavLight.withValues(alpha: 0.6)),
-        boxShadow: [BoxShadow(color: _kLavender.withValues(alpha: 0.08),
-            blurRadius: 16, offset: const Offset(0, 4))],
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _kTaupe.withValues(alpha: 0.18)),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 12, offset: const Offset(0, 4))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -404,9 +506,11 @@ class _PackageLandingCard extends StatelessWidget {
           if (pkg.description.isNotEmpty) ...[
             const SizedBox(height: 10),
             Text(pkg.description,
-                style: GoogleFonts.lato(fontSize: 13, color: _kTaupe, height: 1.55)),
+                softWrap: true,
+                style: GoogleFonts.lato(fontSize: 13, color: _kTaupe, height: 1.6)),
           ],
           const SizedBox(height: 16),
+          if (isDesktop) const Spacer(),
           ...pkg.services.map((s) => Padding(
             padding: const EdgeInsets.only(bottom: 6),
             child: Row(children: [
@@ -548,14 +652,19 @@ class _AboutSection extends StatelessWidget {
                       description:
                           'Libera tensiones acumuladas y redescubre la ligereza de tu cuerpo y tu espíritu.'),
                 ];
-                final cols = constraints.maxWidth > 700 ? 4 : 2;
+                final cols = constraints.maxWidth > 1000 ? 4 : (constraints.maxWidth > 700 ? 2 : 1);
+                final isDesktop = cols == 4;
                 return Wrap(
-                  spacing: 16,
-                  runSpacing: 16,
+                  spacing: 20,
+                  runSpacing: 20,
                   children: pillars.map((p) {
                     final w =
-                        (constraints.maxWidth - (cols - 1) * 16) / cols;
-                    return SizedBox(width: w.clamp(140.0, 320.0), child: p);
+                        (constraints.maxWidth - (cols - 1) * 20) / cols;
+                    return SizedBox(
+                      width: w.clamp(200.0, 360.0),
+                      height: isDesktop ? 290 : null,
+                      child: p,
+                    );
                   }).toList(),
                 );
               }),
@@ -773,32 +882,33 @@ class _KiriValuePillar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      height: 290,
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _kCreamDark),
+        color: const Color(0xFFFCFAF7),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _kTaupe.withValues(alpha: 0.22), width: 1),
         boxShadow: [
           BoxShadow(
-              color: _kOlive.withValues(alpha: 0.05),
-              blurRadius: 12,
-              offset: const Offset(0, 4))
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 10,
+              offset: const Offset(0, 3))
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(emoji, style: const TextStyle(fontSize: 28)),
-          const SizedBox(height: 12),
+          Text(emoji, style: const TextStyle(fontSize: 22)),
+          const SizedBox(height: 16),
           Text(title,
               style: GoogleFonts.cormorantGaramond(
-                  fontSize: 18,
+                  fontSize: 21,
                   fontWeight: FontWeight.w700,
                   color: _kOlive)),
           const SizedBox(height: 8),
           Text(description,
               style: GoogleFonts.lato(
-                  fontSize: 13, color: _kTaupe, height: 1.55)),
+                  fontSize: 13, color: _kTaupe, height: 1.7)),
         ],
       ),
     );
@@ -842,25 +952,25 @@ class _ContactSection extends StatelessWidget {
       width: double.infinity,
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [_kOlive, Color(0xFF5E6B52)],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFFF5EFE6), Color(0xFFEDE3D7)],
         ),
       ),
       padding: EdgeInsets.symmetric(horizontal: isWide ? 80 : 24, vertical: 64),
       child: Column(children: [
-        Text('CONTÁCTANOS', style: GoogleFonts.lato(color: _kLavLight,
+        Text('CONTÁCTANOS', style: GoogleFonts.lato(color: _kLavender,
             fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 2)),
         const SizedBox(height: 12),
         Text('¿Lista para sentirte mejor?',
             textAlign: TextAlign.center,
             style: GoogleFonts.cormorantGaramond(
-                fontSize: 36, fontWeight: FontWeight.w600, color: Colors.white)),
+                fontSize: 36, fontWeight: FontWeight.w700, color: _kOlive)),
         const SizedBox(height: 12),
         Text('Escríbenos o llámanos y con gusto agendamos tu cita.',
             textAlign: TextAlign.center,
             style: GoogleFonts.lato(
-                fontSize: 16, color: Colors.white.withValues(alpha: 0.8), height: 1.5)),
+                fontSize: 16, color: _kTaupe, height: 1.5)),
         const SizedBox(height: 48),
         Wrap(
           spacing: 20, runSpacing: 20, alignment: WrapAlignment.center,
@@ -928,32 +1038,39 @@ class _ContactCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDesktop = MediaQuery.of(context).size.width >= 1100;
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 220,
+        width: isDesktop ? 240 : 220,
+        height: isDesktop ? 220 : null,
         padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+          color: const Color(0xFFFCFAF7),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _kTaupe.withValues(alpha: 0.18)),
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 12, offset: const Offset(0, 4))],
         ),
-        child: Column(children: [
-          Icon(icon, color: _kLavLight, size: 32),
-          const SizedBox(height: 12),
-          Text(title, textAlign: TextAlign.center,
-              style: GoogleFonts.lato(color: Colors.white.withValues(alpha: 0.65),
-                  fontSize: 12, letterSpacing: 0.5)),
-          const SizedBox(height: 6),
-          Text(content, textAlign: TextAlign.center,
-              style: GoogleFonts.lato(color: Colors.white,
-                  fontSize: 16, fontWeight: FontWeight.w600)),
-          if (onTap != null) ...[
-            const SizedBox(height: 10),
-            Text('Toca para contactar',
-                style: GoogleFonts.lato(color: _kLavLight, fontSize: 11)),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: _kLavender, size: 30),
+            const SizedBox(height: 12),
+            Text(title, textAlign: TextAlign.center,
+                style: GoogleFonts.lato(color: _kTaupe,
+                    fontSize: 12, letterSpacing: 0.5, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Text(content, textAlign: TextAlign.center,
+                style: GoogleFonts.lato(color: _kOlive,
+                    fontSize: 16, fontWeight: FontWeight.w700)),
+            if (onTap != null) ...[
+              const SizedBox(height: 10),
+              Text('Toca para contactar',
+                  style: GoogleFonts.lato(color: _kLavender, fontSize: 11)),
+            ],
           ],
-        ]),
+        ),
       ),
     );
   }
