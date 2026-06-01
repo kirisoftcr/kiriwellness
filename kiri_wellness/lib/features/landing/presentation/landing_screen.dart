@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 // ignore: avoid_web_libraries_in_flutter
 import 'dart:html' as html;
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -70,7 +69,7 @@ class _HeroSection extends StatelessWidget {
       child: Padding(
         padding: EdgeInsets.symmetric(
           horizontal: isDesktop ? 80 : 24,
-          vertical: isDesktop ? 92 : 64,
+          vertical: isDesktop ? 112 : 78,
         ),
         child: isDesktop
             ? Row(
@@ -157,7 +156,7 @@ class _HeroText extends StatelessWidget {
             fontWeight: FontWeight.w500,
           ),
         ),
-        const SizedBox(height: 40),
+        const SizedBox(height: 44),
         Wrap(
           spacing: 16,
           runSpacing: 12,
@@ -174,21 +173,6 @@ class _HeroText extends StatelessWidget {
                 textStyle: GoogleFonts.lato(fontSize: 15, fontWeight: FontWeight.w700),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(50)),
                 elevation: 0,
-              ),
-            ),
-            OutlinedButton.icon(
-              onPressed: () {
-                html.window.location.href =
-                    'https://wa.me/50686500843?text=Hola%2C%20quiero%20m%C3%A1s%20informaci%C3%B3n';
-              },
-              icon: const Icon(Icons.chat_bubble_outline, size: 17),
-              label: const Text('WhatsApp'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _kOlive,
-                side: const BorderSide(color: _kOlive, width: 1.5),
-                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
-                textStyle: GoogleFonts.lato(fontSize: 15, fontWeight: FontWeight.w600),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(50)),
               ),
             ),
           ],
@@ -248,7 +232,7 @@ class _ServicesSection extends StatelessWidget {
     final isWide = MediaQuery.of(context).size.width >= 800;
     return Container(
       color: Colors.white,
-      padding: EdgeInsets.symmetric(horizontal: isWide ? 80 : 24, vertical: 64),
+      padding: EdgeInsets.symmetric(horizontal: isWide ? 80 : 24, vertical: 88),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -257,7 +241,7 @@ class _ServicesSection extends StatelessWidget {
             title: 'Terapias diseñadas\npara ti',
             subtitle: 'Cada sesión es personalizada para atender tus necesidades físicas y emocionales.',
           ),
-          const SizedBox(height: 40),
+          const SizedBox(height: 52),
           StreamBuilder<QuerySnapshot>(
             stream: AppFirebase.firestore
                 .collection('services')
@@ -286,67 +270,8 @@ class _ServiceGrid extends StatelessWidget {
   final int columns;
   const _ServiceGrid({required this.services, required this.columns});
 
-  double _measureTextHeight(
-    String text,
-    TextStyle style,
-    double maxWidth, {
-    int? maxLines,
-  }) {
-    final painter = TextPainter(
-      text: TextSpan(text: text, style: style),
-      textDirection: TextDirection.ltr,
-      maxLines: maxLines,
-    )..layout(maxWidth: maxWidth);
-    return painter.height;
-  }
-
-  double _desktopCardHeight(BuildContext context, double cardWidth) {
-    final nameStyle = GoogleFonts.cormorantGaramond(
-      fontSize: 20,
-      fontWeight: FontWeight.w700,
-      color: _kOlive,
-    );
-    final descriptionStyle = GoogleFonts.lato(
-      fontSize: 13,
-      color: _kTaupe,
-      height: 1.65,
-    );
-
-    double maxHeight = 0;
-    for (final service in services) {
-      final titleHeight = _measureTextHeight(
-        service.name,
-        nameStyle,
-        cardWidth - 48,
-      );
-      final descriptionHeight = service.description.isNotEmpty
-          ? _measureTextHeight(
-              service.description,
-              descriptionStyle,
-              cardWidth - 48,
-            )
-          : 0;
-
-      final height =
-          24 + // padding top
-          48 + // icon block
-          16 + // icon to title gap
-          titleHeight +
-          8 +
-          descriptionHeight +
-          (service.description.isNotEmpty ? 12 : 0) +
-          40 + // chip row space
-          24; // padding bottom
-
-      maxHeight = math.max(maxHeight, height);
-    }
-
-    return maxHeight.clamp(360.0, 640.0);
-  }
-
   @override
   Widget build(BuildContext context) {
-    final isDesktop = MediaQuery.of(context).size.width >= 1100;
     return Wrap(
       spacing: 20,
       runSpacing: 20,
@@ -358,8 +283,7 @@ class _ServiceGrid extends StatelessWidget {
         final cardWidth = width.clamp(240, 400).toDouble();
         return SizedBox(
           width: cardWidth,
-          height: isDesktop ? _desktopCardHeight(context, cardWidth) : null,
-          child: _ServiceCard(service: s, isDesktop: isDesktop),
+          child: _ServiceCard(service: s),
         );
       }).toList(),
     );
@@ -368,22 +292,21 @@ class _ServiceGrid extends StatelessWidget {
 
 class _ServiceCard extends StatelessWidget {
   final ServiceModel service;
-  final bool isDesktop;
-  const _ServiceCard({required this.service, this.isDesktop = false});
+  const _ServiceCard({required this.service});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: isDesktop ? double.infinity : null,
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _kTaupe.withValues(alpha: 0.18)),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 12, offset: const Offset(0, 4))],
+        border: Border.all(color: _kTaupe.withValues(alpha: 0.12)),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.015),
+            blurRadius: 8, offset: const Offset(0, 2))],
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
@@ -405,12 +328,11 @@ class _ServiceCard extends StatelessWidget {
                 style: GoogleFonts.lato(fontSize: 13, color: _kTaupe, height: 1.65)),
             const SizedBox(height: 12),
           ],
-          if (isDesktop) const Spacer(),
           Wrap(spacing: 8, runSpacing: 8, children: [
             _Chip(icon: Icons.schedule_outlined, label: '${service.durationMinutes} min'),
             if (service.price > 0)
-              _Chip(icon: Icons.attach_money_rounded,
-                  label: '₡${service.price.toStringAsFixed(0)}'),
+              _Chip(icon: Icons.payments_outlined,
+                  label: service.price.toStringAsFixed(0)),
           ]),
         ],
       ),
@@ -431,7 +353,7 @@ class _PackagesSection extends StatelessWidget {
     return Container(
       width: double.infinity,
       color: _kOlive.withValues(alpha: 0.06),
-      padding: EdgeInsets.symmetric(horizontal: isWide ? 80 : 24, vertical: 64),
+      padding: EdgeInsets.symmetric(horizontal: isWide ? 80 : 24, vertical: 88),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -440,7 +362,7 @@ class _PackagesSection extends StatelessWidget {
             title: 'Ahorra más con\nnuestros paquetes',
             subtitle: 'Combina sesiones de diferentes terapias y obtén un precio especial.',
           ),
-          const SizedBox(height: 40),
+          const SizedBox(height: 52),
           StreamBuilder<QuerySnapshot>(
             stream: AppFirebase.firestore
                 .collection('packages')
@@ -469,7 +391,6 @@ class _PackageLandingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final w = MediaQuery.of(context).size.width;
-    final isDesktop = w >= 1100;
     final cardWidth = (w >= 800
             ? (w - 160 - 40) / 3
             : (w >= 540 ? (w - 48 - 20) / 2 : w - 48))
@@ -477,16 +398,16 @@ class _PackageLandingCard extends StatelessWidget {
 
     return Container(
       width: cardWidth,
-      height: isDesktop ? 360 : null,
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _kTaupe.withValues(alpha: 0.18)),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 12, offset: const Offset(0, 4))],
+        border: Border.all(color: _kTaupe.withValues(alpha: 0.12)),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.015),
+            blurRadius: 8, offset: const Offset(0, 2))],
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(children: [
@@ -510,7 +431,6 @@ class _PackageLandingCard extends StatelessWidget {
                 style: GoogleFonts.lato(fontSize: 13, color: _kTaupe, height: 1.6)),
           ],
           const SizedBox(height: 16),
-          if (isDesktop) const Spacer(),
           ...pkg.services.map((s) => Padding(
             padding: const EdgeInsets.only(bottom: 6),
             child: Row(children: [
@@ -537,7 +457,7 @@ class _PackageLandingCard extends StatelessWidget {
                           fontSize: 11, fontWeight: FontWeight.w700)),
                 ),
               const SizedBox(height: 4),
-              Text('₡${pkg.price.toStringAsFixed(0)}',
+                Text(pkg.price.toStringAsFixed(0),
                   style: GoogleFonts.cormorantGaramond(fontSize: 24,
                       fontWeight: FontWeight.bold, color: _kOlive)),
             ]),
@@ -587,7 +507,7 @@ class _AboutSection extends StatelessWidget {
           width: double.infinity,
           color: Colors.white,
           padding: EdgeInsets.symmetric(
-              horizontal: isWide ? 80 : 24, vertical: 72),
+              horizontal: isWide ? 80 : 24, vertical: 88),
           child: isWide
               ? Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
@@ -611,7 +531,7 @@ class _AboutSection extends StatelessWidget {
           width: double.infinity,
           color: _kCream,
           padding: EdgeInsets.symmetric(
-              horizontal: isWide ? 80 : 24, vertical: 56),
+              horizontal: isWide ? 80 : 24, vertical: 88),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -628,7 +548,7 @@ class _AboutSection extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                       color: _kOlive,
                       height: 1.2)),
-              const SizedBox(height: 32),
+              const SizedBox(height: 52),
               LayoutBuilder(builder: (ctx, constraints) {
                 const pillars = [
                   _KiriValuePillar(
@@ -882,17 +802,16 @@ class _KiriValuePillar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 290,
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         color: const Color(0xFFFCFAF7),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _kTaupe.withValues(alpha: 0.22), width: 1),
+        border: Border.all(color: _kTaupe.withValues(alpha: 0.14), width: 1),
         boxShadow: [
           BoxShadow(
-              color: Colors.black.withValues(alpha: 0.03),
-              blurRadius: 10,
-              offset: const Offset(0, 3))
+              color: Colors.black.withValues(alpha: 0.015),
+              blurRadius: 8,
+              offset: const Offset(0, 2))
         ],
       ),
       child: Column(
@@ -907,6 +826,7 @@ class _KiriValuePillar extends StatelessWidget {
                   color: _kOlive)),
           const SizedBox(height: 8),
           Text(description,
+              softWrap: true,
               style: GoogleFonts.lato(
                   fontSize: 13, color: _kTaupe, height: 1.7)),
         ],
@@ -957,7 +877,7 @@ class _ContactSection extends StatelessWidget {
           colors: [Color(0xFFF5EFE6), Color(0xFFEDE3D7)],
         ),
       ),
-      padding: EdgeInsets.symmetric(horizontal: isWide ? 80 : 24, vertical: 64),
+      padding: EdgeInsets.symmetric(horizontal: isWide ? 80 : 24, vertical: 88),
       child: Column(children: [
         Text('CONTÁCTANOS', style: GoogleFonts.lato(color: _kLavender,
             fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 2)),
@@ -971,7 +891,7 @@ class _ContactSection extends StatelessWidget {
             textAlign: TextAlign.center,
             style: GoogleFonts.lato(
                 fontSize: 16, color: _kTaupe, height: 1.5)),
-        const SizedBox(height: 48),
+        const SizedBox(height: 56),
         Wrap(
           spacing: 20, runSpacing: 20, alignment: WrapAlignment.center,
           children: [
@@ -1009,7 +929,7 @@ class _ContactSection extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 48),
+        const SizedBox(height: 56),
         ElevatedButton.icon(
           onPressed: () { html.window.location.href = '/#/book'; },
           icon: const Icon(Icons.calendar_today_rounded, size: 18),
@@ -1048,9 +968,9 @@ class _ContactCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: const Color(0xFFFCFAF7),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: _kTaupe.withValues(alpha: 0.18)),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03),
-              blurRadius: 12, offset: const Offset(0, 4))],
+            border: Border.all(color: _kTaupe.withValues(alpha: 0.12)),
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.015),
+                blurRadius: 8, offset: const Offset(0, 2))],
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -1142,10 +1062,10 @@ class _SectionHeading extends StatelessWidget {
       children: [
         Text(tag, style: GoogleFonts.lato(color: _kLavender, fontSize: 12,
             fontWeight: FontWeight.w700, letterSpacing: 2)),
-        const SizedBox(height: 10),
+        const SizedBox(height: 14),
         Text(title, style: GoogleFonts.cormorantGaramond(fontSize: isWide ? 42 : 36,
             fontWeight: FontWeight.w600, color: _kOlive, height: 1.2)),
-        const SizedBox(height: 12),
+        const SizedBox(height: 16),
         Text(subtitle, style: GoogleFonts.lato(
             fontSize: isWide ? 16 : 15, color: _kTaupe, height: 1.65)),
       ],
