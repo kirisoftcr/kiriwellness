@@ -25,7 +25,7 @@ class LandingScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _kCream,
+      backgroundColor: Colors.white,
       body: SingleChildScrollView(
         child: Column(
           children: [
@@ -53,37 +53,31 @@ class _HeroSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isWide = MediaQuery.of(context).size.width >= 800;
+    final isWide = MediaQuery.of(context).size.width >= 900;
     return Container(
       width: double.infinity,
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [_kOlive, Color(0xFF5E6B52), Color(0xFF7A8A6E)],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            const Color(0xFFF5EFE6),
+            const Color(0xFFEDE3D7),
+          ],
         ),
       ),
-      child: Stack(
-        children: [
-          Positioned.fill(child: CustomPaint(painter: _LeafPatternPainter())),
-          Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: isWide ? 80 : 24,
-              vertical: isWide ? 80 : 56,
-            ),
-            child: isWide
-                ? Row(children: [
-                    Expanded(flex: 3, child: _HeroText(onBook: onBook)),
-                    const SizedBox(width: 60),
-                    Expanded(flex: 2, child: _HeroIllustration()),
-                  ])
-                : Column(crossAxisAlignment: CrossAxisAlignment.center, children: [
-                    _HeroText(onBook: onBook, centered: true),
-                    const SizedBox(height: 40),
-                    _HeroIllustration(),
-                  ]),
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: isWide ? 80 : 24,
+          vertical: isWide ? 88 : 64,
+        ),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: _HeroText(onBook: onBook, centered: false),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -96,6 +90,7 @@ class _HeroText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isWide = MediaQuery.of(context).size.width >= 800;
     return Column(
       crossAxisAlignment:
           centered ? CrossAxisAlignment.center : CrossAxisAlignment.start,
@@ -113,10 +108,10 @@ class _HeroText extends StatelessWidget {
           'Tu momento de\nbienestar comienza aquí',
           textAlign: centered ? TextAlign.center : TextAlign.start,
           style: GoogleFonts.cormorantGaramond(
-            color: Colors.white,
-            fontSize: 48,
-            fontWeight: FontWeight.w600,
-            height: 1.15,
+            color: _kOlive,
+            fontSize: isWide ? 64 : 46,
+            fontWeight: FontWeight.w700,
+            height: 1.1,
           ),
         ),
         const SizedBox(height: 18),
@@ -124,9 +119,10 @@ class _HeroText extends StatelessWidget {
           'Masoterapia profesional para aliviar tensiones,\nrestaurar tu energía y cuidar tu cuerpo.',
           textAlign: centered ? TextAlign.center : TextAlign.start,
           style: GoogleFonts.lato(
-            color: Colors.white.withValues(alpha: 0.85),
-            fontSize: 16,
-            height: 1.65,
+            color: _kTaupe,
+            fontSize: isWide ? 22 : 18,
+            height: 1.6,
+            fontWeight: FontWeight.w500,
           ),
         ),
         const SizedBox(height: 40),
@@ -140,7 +136,7 @@ class _HeroText extends StatelessWidget {
               icon: const Icon(Icons.calendar_today_rounded, size: 17),
               label: const Text('Reservar una cita'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: _kLavender,
+                backgroundColor: _kOlive,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
                 textStyle: GoogleFonts.lato(fontSize: 15, fontWeight: FontWeight.w700),
@@ -156,8 +152,8 @@ class _HeroText extends StatelessWidget {
               icon: const Icon(Icons.chat_bubble_outline, size: 17),
               label: const Text('WhatsApp'),
               style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.white,
-                side: const BorderSide(color: Colors.white, width: 1.5),
+                foregroundColor: _kOlive,
+                side: const BorderSide(color: _kOlive, width: 1.5),
                 padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
                 textStyle: GoogleFonts.lato(fontSize: 15, fontWeight: FontWeight.w600),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(50)),
@@ -166,52 +162,6 @@ class _HeroText extends StatelessWidget {
           ],
         ),
       ],
-    );
-  }
-}
-
-class _HeroIllustration extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 320,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        color: Colors.white.withValues(alpha: 0.08),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.25), width: 1.5),
-      ),
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Positioned(
-            top: 24, right: 24,
-            child: Container(width: 70, height: 70,
-                decoration: BoxDecoration(shape: BoxShape.circle,
-                    color: _kLavender.withValues(alpha: 0.2))),
-          ),
-          Positioned(
-            bottom: 32, left: 24,
-            child: Container(width: 44, height: 44,
-                decoration: BoxDecoration(shape: BoxShape.circle,
-                    color: _kTaupe.withValues(alpha: 0.25))),
-          ),
-          Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Icon(Icons.spa_rounded, size: 72,
-                color: _kLavLight.withValues(alpha: 0.8)),
-            const SizedBox(height: 16),
-            Text('Tu espacio de relajación',
-                style: GoogleFonts.cormorantGaramond(
-                    color: Colors.white, fontSize: 18, fontStyle: FontStyle.italic)),
-            const SizedBox(height: 10),
-            Container(margin: const EdgeInsets.symmetric(horizontal: 40),
-                height: 1, color: Colors.white.withValues(alpha: 0.25)),
-            const SizedBox(height: 12),
-            Text('✦  Masoterapia  ·  Bienestar  ✦',
-                style: GoogleFonts.lato(color: _kLavLight.withValues(alpha: 0.7),
-                    fontSize: 11, letterSpacing: 2)),
-          ]),
-        ],
-      ),
     );
   }
 }
@@ -265,7 +215,7 @@ class _ServicesSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final isWide = MediaQuery.of(context).size.width >= 800;
     return Container(
-      color: _kCream,
+      color: Colors.white,
       padding: EdgeInsets.symmetric(horizontal: isWide ? 80 : 24, vertical: 64),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -531,7 +481,7 @@ class _AboutSection extends StatelessWidget {
         // ── Historia del nombre ─────────────────────────────────────────
         Container(
           width: double.infinity,
-          color: _kCream,
+          color: Colors.white,
           padding: EdgeInsets.symmetric(
               horizontal: isWide ? 80 : 24, vertical: 72),
           child: isWide
@@ -555,7 +505,7 @@ class _AboutSection extends StatelessWidget {
         // ── Pilares de valor ────────────────────────────────────────────
         Container(
           width: double.infinity,
-          color: _kOlive.withValues(alpha: 0.04),
+          color: _kCream,
           padding: EdgeInsets.symmetric(
               horizontal: isWide ? 80 : 24, vertical: 56),
           child: Column(
@@ -1069,17 +1019,18 @@ class _SectionHeading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isWide = MediaQuery.of(context).size.width >= 800;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(tag, style: GoogleFonts.lato(color: _kLavender, fontSize: 12,
             fontWeight: FontWeight.w700, letterSpacing: 2)),
         const SizedBox(height: 10),
-        Text(title, style: GoogleFonts.cormorantGaramond(fontSize: 36,
+        Text(title, style: GoogleFonts.cormorantGaramond(fontSize: isWide ? 42 : 36,
             fontWeight: FontWeight.w600, color: _kOlive, height: 1.2)),
         const SizedBox(height: 12),
         Text(subtitle, style: GoogleFonts.lato(
-            fontSize: 15, color: _kTaupe, height: 1.65)),
+            fontSize: isWide ? 16 : 15, color: _kTaupe, height: 1.65)),
       ],
     );
   }
