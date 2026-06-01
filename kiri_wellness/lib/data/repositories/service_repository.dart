@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/config/app_firebase.dart';
 import '../../shared/models/service_model.dart';
 
 class ServiceRepository {
@@ -8,7 +9,7 @@ class ServiceRepository {
   final FirebaseFunctions _functions;
 
   ServiceRepository({FirebaseFirestore? db, FirebaseFunctions? functions})
-      : _db = db ?? FirebaseFirestore.instance,
+      : _db = db ?? AppFirebase.firestore,
         _functions = functions ?? FirebaseFunctions.instanceFor(region: "us-central1");
 
   CollectionReference<Map<String, dynamic>> get _col =>

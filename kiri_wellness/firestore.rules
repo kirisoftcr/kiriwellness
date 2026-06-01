@@ -11,6 +11,16 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    function isAdminDoc(adminId) {
+      return isAuthenticated() && request.auth.uid == adminId;
+    }
+
+    // Admin profiles
+    match /admins/{adminId} {
+      allow read: if isAdminDoc(adminId);
+      allow write: if false;
+    }
+
     // Appointments
     match /appointments/{appointmentId} {
       allow read, write: if isAuthenticated();

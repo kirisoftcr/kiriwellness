@@ -5,8 +5,7 @@ import { getAdminEmail, SECRET_NAMES, sendEmail } from "../config/brevo";
 import { adminBookingNotificationHtml, appointmentConfirmedClientHtml, appointmentThankYouHtml } from "../config/email_templates";
 import { checkAndGrantRewards, buildLoyaltyProgressHtml } from "../loyalty/loyalty_crud";
 import { usePackageSession } from "../packages/packages_crud";
-
-const db = () => admin.firestore();
+import { firestoreForCallable } from "../config/firestore_db";
 
 // ---------------------------------------------------------------------------
 // getSettings (public — used by booking flow to know break time)
@@ -14,8 +13,9 @@ const db = () => admin.firestore();
 
 export const getSettings = onCall(
   { region: "us-central1", invoker: "public", enforceAppCheck: false },
-  async () => {
-    const snap = await db().collection("settings").doc("global").get();
+  async (request) => {
+    const database = firestoreForCallable(request);
+    const snap = await database.collection("settings").doc("global").get();
     if (!snap.exists) {
       return { breakMinutes: 30, cancellationHoursLimit: 24, allowSameDayBooking: true };
     }
@@ -30,6 +30,8 @@ export const getSettings = onCall(
 export const updateSettings = onCall(
   { region: "us-central1", invoker: "public" },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     }
@@ -50,7 +52,7 @@ export const updateSettings = onCall(
     if (allowSameDayBooking !== undefined) updates["allowSameDayBooking"] = Boolean(allowSameDayBooking);
     if (adminEmails !== undefined) updates["adminEmails"] = adminEmails.map((e) => e.trim().toLowerCase()).filter(Boolean);
 
-    await db().collection("settings").doc("global").set(updates, { merge: true });
+    await database.collection("settings").doc("global").set(updates, { merge: true });
 
     logger.info("Settings updated");
     return { success: true };
@@ -64,6 +66,8 @@ export const updateSettings = onCall(
 export const updateAppointmentStatus = onCall(
   { region: "us-central1", invoker: "public", secrets: [...SECRET_NAMES] },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     }
@@ -78,7 +82,7 @@ export const updateAppointmentStatus = onCall(
       throw new HttpsError("invalid-argument", "Estado inválido.");
     }
 
-    await db().collection("appointments").doc(appointmentId).update({
+    await database.collection("appointments").doc(appointmentId).update({
       status,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
@@ -88,28 +92,28 @@ export const updateAppointmentStatus = onCall(
     // ── Loyalty: check and grant rewards when a cita is completed ──────────
     if (status === "completed") {
       try {
-        const aptSnap = await db().collection("appointments").doc(appointmentId).get();
+        const aptSnap = await database.collection("appointments").doc(appointmentId).get();
         const apt = aptSnap.data();
         if (apt?.["clientId"]) {
           const isPackageAppointment = !!(apt["clientPackageId"]);
 
           if (isPackageAppointment) {
             // ── Package appointment: use a session from the client package ──
-            await usePackageSession(apt["clientPackageId"] as string, apt["serviceId"] as string);
+            await usePackageSession(apt["clientPackageId"] as string, apt["serviceId"] as string, database);
             logger.info("Package session used for appointment", appointmentId);
           } else {
             // ── Regular appointment: increment counter and check loyalty ───
-            const clientRef = db().collection("clients").doc(apt["clientId"]);
+            const clientRef = database.collection("clients").doc(apt["clientId"]);
             await clientRef.update({
               completedAppointments: admin.firestore.FieldValue.increment(1),
             });
             const clientSnap = await clientRef.get();
             const completedCount: number = clientSnap.data()?.["completedAppointments"] ?? 1;
-            await checkAndGrantRewards(apt["clientId"], completedCount);
+            await checkAndGrantRewards(apt["clientId"], completedCount, database);
           }
 
           // ── Thank-you email to client (all appointment types) ────────────
-          const clientRef2 = db().collection("clients").doc(apt["clientId"]);
+          const clientRef2 = database.collection("clients").doc(apt["clientId"]);
           const clientSnap2 = await clientRef2.get();
           const clientEmail: string | undefined = clientSnap2.data()?.["email"];
           if (clientEmail) {
@@ -130,7 +134,7 @@ export const updateAppointmentStatus = onCall(
 
               const loyaltyProgressHtml = isPackageAppointment
                 ? undefined
-                : (await buildLoyaltyProgressHtml(apt["clientId"]) ?? undefined);
+                : (await buildLoyaltyProgressHtml(apt["clientId"], database) ?? undefined);
 
               await sendEmail({
                 to: [{ email: clientEmail, name: clientName }],
@@ -159,11 +163,11 @@ export const updateAppointmentStatus = onCall(
     // ── Send emails when admin confirms or cancels ─────────────────────────
     if (status === "confirmed" || status === "cancelled") {
       try {
-        const aptSnap = await db().collection("appointments").doc(appointmentId).get();
+        const aptSnap = await database.collection("appointments").doc(appointmentId).get();
         const apt = aptSnap.data();
         if (!apt) throw new Error("Appointment not found");
 
-        const clientSnap = await db().collection("clients").doc(apt["clientId"]).get();
+        const clientSnap = await database.collection("clients").doc(apt["clientId"]).get();
         const client = clientSnap.data();
 
         // Format date
@@ -196,7 +200,7 @@ export const updateAppointmentStatus = onCall(
           : `${baseUrl}/#/my-appointments`;
 
         // Resolve admin email recipients
-        const settingsSnap = await db().collection("settings").doc("global").get();
+        const settingsSnap = await database.collection("settings").doc("global").get();
         const adminEmails: string[] = settingsSnap.data()?.["adminEmails"] ?? [];
         const adminRecipients = adminEmails.length > 0
           ? adminEmails.map((e) => ({ email: e, name: "Kiri Wellness Admin" }))
@@ -218,7 +222,7 @@ export const updateAppointmentStatus = onCall(
         // Notify client
         const clientEmail: string | undefined = client?.["email"];
         if (clientEmail && status === "confirmed") {
-          const loyaltyProgressHtml = await buildLoyaltyProgressHtml(apt["clientId"]);
+          const loyaltyProgressHtml = await buildLoyaltyProgressHtml(apt["clientId"], database);
           await sendEmail({
             to: [{ email: clientEmail, name: commonParams.clientName }],
             subject: `✅ Cita confirmada – ${apt["serviceName"]} el ${formattedDate}`,

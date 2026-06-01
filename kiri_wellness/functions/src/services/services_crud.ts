@@ -1,8 +1,7 @@
 import * as admin from "firebase-admin";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
-
-const db = () => admin.firestore();
+import { firestoreForCallable } from "../config/firestore_db";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -30,7 +29,7 @@ export const listServices = onCall(
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     }
 
-    const snap = await db()
+    const snap = await firestoreForCallable(request)
       .collection("services")
       .orderBy("name")
       .get();
@@ -56,7 +55,7 @@ export const createService = onCall(
       throw new HttpsError("invalid-argument", "El nombre es requerido.");
     }
 
-    const ref = db().collection("services").doc();
+    const ref = firestoreForCallable(request).collection("services").doc();
     await ref.set({
       name: data.name.trim(),
       description: data.description ?? "",
@@ -107,7 +106,7 @@ export const updateService = onCall(
     if (fields.benefits !== undefined) update.benefits = fields.benefits;
     if (fields.imageUrl !== undefined) update.imageUrl = fields.imageUrl ?? null;
 
-    await db().collection("services").doc(id).update(update);
+    await firestoreForCallable(request).collection("services").doc(id).update(update);
 
     logger.info("Service updated", id);
     return { id };
@@ -131,7 +130,7 @@ export const deleteService = onCall(
       throw new HttpsError("invalid-argument", "El id del servicio es requerido.");
     }
 
-    await db().collection("services").doc(id).delete();
+    await firestoreForCallable(request).collection("services").doc(id).delete();
 
     logger.info("Service deleted", id);
     return { id };

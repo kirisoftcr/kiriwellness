@@ -1,6 +1,6 @@
-import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { firestoreForCallable } from "../config/firestore_db";
 
 /**
  * Returns a client's appointments using a secure token embedded in email links.
@@ -14,7 +14,7 @@ export const getAppointmentsByToken = onCall(
       throw new HttpsError("invalid-argument", "Token requerido.");
     }
 
-    const db = admin.firestore();
+    const db = firestoreForCallable(request);
 
     // Look up the client by their token
     const clientSnap = await db

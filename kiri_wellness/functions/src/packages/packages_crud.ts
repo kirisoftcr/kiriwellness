@@ -3,8 +3,8 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { randomUUID } from "crypto";
 import { SECRET_NAMES, getAdminEmail, sendEmail } from "../config/brevo";
-
-const db = () => admin.firestore();
+import { type Firestore } from "firebase-admin/firestore";
+import { firestoreForCallable } from "../config/firestore_db";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -26,6 +26,8 @@ interface ClientPackageServiceEntry {
 export const createPackage = onCall(
   { region: "us-central1", invoker: "public" },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     if (!request.auth) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
 
     const { name, description, price, services, discountPercent, validityDays } = request.data as {
@@ -41,7 +43,7 @@ export const createPackage = onCall(
       throw new HttpsError("invalid-argument", "Nombre y servicios son requeridos.");
     }
 
-    const docRef = await db().collection("packages").add({
+    const docRef = await database.collection("packages").add({
       name,
       description: description ?? "",
       price: Number(price) || 0,
@@ -66,6 +68,8 @@ export const createPackage = onCall(
 export const updatePackage = onCall(
   { region: "us-central1", invoker: "public" },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     if (!request.auth) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
 
     const { id, name, description, price, services, discountPercent, validityDays, isActive } = request.data as {
@@ -96,7 +100,7 @@ export const updatePackage = onCall(
     if (validityDays !== undefined) updates["validityDays"] = Number(validityDays);
     if (isActive !== undefined) updates["isActive"] = Boolean(isActive);
 
-    await db().collection("packages").doc(id).update(updates);
+    await database.collection("packages").doc(id).update(updates);
     logger.info("Package updated", id);
     return { success: true };
   }
@@ -107,12 +111,14 @@ export const updatePackage = onCall(
 export const deletePackage = onCall(
   { region: "us-central1", invoker: "public" },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     if (!request.auth) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
 
     const { id } = request.data as { id: string };
     if (!id) throw new HttpsError("invalid-argument", "El ID del paquete es requerido.");
 
-    await db().collection("packages").doc(id).update({
+    await database.collection("packages").doc(id).update({
       isActive: false,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
@@ -128,6 +134,8 @@ export const deletePackage = onCall(
 export const assignPackageToClient = onCall(
   { region: "us-central1", invoker: "public" },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     if (!request.auth) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
 
     const { clientId, packageId } = request.data as {
@@ -140,8 +148,8 @@ export const assignPackageToClient = onCall(
     }
 
     const [clientSnap, pkgSnap] = await Promise.all([
-      db().collection("clients").doc(clientId).get(),
-      db().collection("packages").doc(packageId).get(),
+      database.collection("clients").doc(clientId).get(),
+      database.collection("packages").doc(packageId).get(),
     ]);
 
     if (!clientSnap.exists) throw new HttpsError("not-found", "Cliente no encontrado.");
@@ -162,7 +170,7 @@ export const assignPackageToClient = onCall(
       usedSessions: 0,
     }));
 
-    const docRef = await db().collection("client_packages").add({
+    const docRef = await database.collection("client_packages").add({
       clientId,
       packageId,
       packageName: pkg["name"] ?? "",
@@ -187,6 +195,8 @@ export const assignPackageToClient = onCall(
 export const getClientPackages = onCall(
   { region: "us-central1", invoker: "public", enforceAppCheck: false },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     const { token, clientId: directClientId } = request.data as {
       token?: string;
       clientId?: string;
@@ -196,7 +206,7 @@ export const getClientPackages = onCall(
 
     // Resolve clientId from token if not passed directly
     if (!resolvedClientId && token) {
-      const clientSnap = await db()
+      const clientSnap = await database
         .collection("clients")
         .where("clientToken", "==", token)
         .limit(1)
@@ -210,7 +220,7 @@ export const getClientPackages = onCall(
       throw new HttpsError("not-found", "Cliente no encontrado.");
     }
 
-    const snap = await db()
+    const snap = await database
       .collection("client_packages")
       .where("clientId", "==", resolvedClientId)
       .orderBy("purchasedAt", "desc")
@@ -252,10 +262,14 @@ export const getClientPackages = onCall(
 // Internal helper — called by admin_crud when a package appointment is completed.
 // Increments usedSessions both at the top level and for the specific service.
 
-export async function usePackageSession(clientPackageId: string, serviceId: string): Promise<void> {
-  const ref = db().collection("client_packages").doc(clientPackageId);
+export async function usePackageSession(
+  clientPackageId: string,
+  serviceId: string,
+  database: Firestore = admin.firestore()
+): Promise<void> {
+  const ref = database.collection("client_packages").doc(clientPackageId);
 
-  await db().runTransaction(async (tx) => {
+  await database.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists) throw new Error(`client_package ${clientPackageId} not found`);
 
@@ -295,6 +309,8 @@ export async function usePackageSession(clientPackageId: string, serviceId: stri
 export const createPackageAppointment = onCall(
   { region: "us-central1", invoker: "public", enforceAppCheck: false },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     const { clientId, clientPackageId, serviceId, serviceName, date, time, notes } =
       request.data as {
         clientId: string;
@@ -309,8 +325,6 @@ export const createPackageAppointment = onCall(
     if (!clientId || !clientPackageId || !serviceId || !date || !time) {
       throw new HttpsError("invalid-argument", "Faltan campos requeridos.");
     }
-
-    const database = db();
 
     // 1. Validate package ownership + sessions remaining
     const pkgRef = database.collection("client_packages").doc(clientPackageId);
@@ -414,6 +428,8 @@ export const createPackageAppointment = onCall(
 export const requestPackage = onCall(
   { region: "us-central1", invoker: "public", enforceAppCheck: false, secrets: SECRET_NAMES },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     const { packageId, firstName, lastName, email, phone, notes } = request.data as {
       packageId: string;
       firstName: string;
@@ -426,8 +442,6 @@ export const requestPackage = onCall(
     if (!packageId || !firstName || !email || !phone) {
       throw new HttpsError("invalid-argument", "Faltan campos requeridos.");
     }
-
-    const database = db();
 
     // 1. Load package
     const pkgSnap = await database.collection("packages").doc(packageId).get();
@@ -556,12 +570,13 @@ export const requestPackage = onCall(
 export const approveClientPackage = onCall(
   { region: "us-central1", invoker: "public", secrets: SECRET_NAMES },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     if (!request.auth) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
 
     const { clientPackageId } = request.data as { clientPackageId: string };
     if (!clientPackageId) throw new HttpsError("invalid-argument", "clientPackageId requerido.");
 
-    const database = db();
     const pkgRef = database.collection("client_packages").doc(clientPackageId);
     const pkgSnap = await pkgRef.get();
     if (!pkgSnap.exists) throw new HttpsError("not-found", "Paquete de cliente no encontrado.");
@@ -617,6 +632,8 @@ export const approveClientPackage = onCall(
 export const rejectClientPackage = onCall(
   { region: "us-central1", invoker: "public", secrets: SECRET_NAMES },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     if (!request.auth) throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
 
     const { clientPackageId, reason } = request.data as {
@@ -625,7 +642,6 @@ export const rejectClientPackage = onCall(
     };
     if (!clientPackageId) throw new HttpsError("invalid-argument", "clientPackageId requerido.");
 
-    const database = db();
     const pkgRef = database.collection("client_packages").doc(clientPackageId);
     const pkgSnap = await pkgRef.get();
     if (!pkgSnap.exists) throw new HttpsError("not-found", "Paquete de cliente no encontrado.");

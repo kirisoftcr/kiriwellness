@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/auth/auth_repository.dart';
@@ -64,8 +65,9 @@ final routerProvider = Provider<GoRouter>((ref) {
     refreshListenable: notifier,
     redirect: (context, state) {
       final authState = ref.read(authStateProvider);
-      final isLoggedIn = authState.valueOrNull != null;
-      final isLoading = authState.isLoading;
+      final hasFirebaseSession = FirebaseAuth.instance.currentUser != null;
+      final isLoggedIn = authState.valueOrNull != null || hasFirebaseSession;
+      final isLoading = authState.isLoading && !hasFirebaseSession;
       final goingToLogin = state.matchedLocation == '/login';
       final goingToBook = state.matchedLocation.startsWith('/book');
       final goingToMyApts = state.matchedLocation.startsWith('/my-appointments');

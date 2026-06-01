@@ -1,8 +1,8 @@
-import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { FieldValue } from "firebase-admin/firestore";
 import { randomUUID } from "crypto";
+import { firestoreForCallable } from "../config/firestore_db";
 
 interface CreateBookingRequest {
   // Client info
@@ -42,7 +42,7 @@ export const createBooking = onCall<CreateBookingRequest>(
       throw new HttpsError("invalid-argument", "Missing required fields.");
     }
 
-    const db = admin.firestore();
+    const db = firestoreForCallable(request);
 
     let clientId: string;
     let clientCode: string;

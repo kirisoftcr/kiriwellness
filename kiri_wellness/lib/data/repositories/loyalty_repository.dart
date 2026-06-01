@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/config/app_firebase.dart';
 import '../../shared/models/loyalty_model.dart';
 
 class LoyaltyRepository {
@@ -8,7 +9,7 @@ class LoyaltyRepository {
   final FirebaseFunctions _functions;
 
   LoyaltyRepository({FirebaseFirestore? db, FirebaseFunctions? functions})
-      : _db = db ?? FirebaseFirestore.instance,
+      : _db = db ?? AppFirebase.firestore,
         _functions = functions ??
             FirebaseFunctions.instanceFor(region: "us-central1");
 

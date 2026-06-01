@@ -39,9 +39,9 @@
 			"problemMatcher": []
 		},
 		{
-			"label": "Deploy Hosting (Prod)",
+			"label": "Deploy Hosting (Prod Admin)",
 			"type": "shell",
-			"command": "flutter build web --dart-define=FLAVOR=prod --release && firebase deploy --only hosting:kiri-wellness-prod --project kiri-wellness-prod",
+			"command": "flutter build web --dart-define=FLAVOR=prod --dart-define=SITE=admin --release && firebase deploy --only hosting:prod-admin --project kiri-wellness-qa",
 			"group": "build",
 			"problemMatcher": []
 		},

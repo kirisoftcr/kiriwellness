@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/config/app_firebase.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/widgets/section_header.dart';
 import '../../../shared/models/package_model.dart';
@@ -700,7 +700,7 @@ class _PendingRequestCardState extends State<_PendingRequestCard> {
   Future<void> _loadClientFallback(String clientId) async {
     setState(() => _fetchingClient = true);
     try {
-      final doc = await FirebaseFirestore.instance.collection('clients').doc(clientId).get();
+      final doc = await AppFirebase.firestore.collection('clients').doc(clientId).get();
       if (doc.exists && mounted) {
         final d = doc.data()!;
         setState(() {

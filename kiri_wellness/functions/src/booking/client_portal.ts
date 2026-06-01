@@ -4,8 +4,8 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { getAdminEmail, SECRET_NAMES, sendEmail } from "../config/brevo";
 import { verificationCodeHtml } from "../config/email_templates";
-
-const db = () => admin.firestore();
+import { type Firestore } from "firebase-admin/firestore";
+import { firestoreForCallable } from "../config/firestore_db";
 
 function formatAmPm(time24: string): string {
   const [hStr, mStr] = time24.split(":");
@@ -19,7 +19,8 @@ function formatAmPm(time24: string): string {
 async function sendAdminActionEmail(
   action: "confirmed" | "cancelled",
   appointmentData: FirebaseFirestore.DocumentData,
-  clientData: FirebaseFirestore.DocumentData
+  clientData: FirebaseFirestore.DocumentData,
+  database: Firestore
 ): Promise<void> {
   const actionLabel = action === "confirmed" ? "confirmó" : "canceló";
   const emoji = action === "confirmed" ? "✅" : "❌";
@@ -28,7 +29,7 @@ async function sendAdminActionEmail(
   const time = formatAmPm(appointmentData["time"] ?? "");
 
   // Resolve admin recipients from Firestore settings, fall back to secret
-  const settingsSnap = await admin.firestore().collection("settings").doc("global").get();
+  const settingsSnap = await database.collection("settings").doc("global").get();
   const adminEmails: string[] = settingsSnap.data()?.["adminEmails"] ?? [];
   const adminRecipients = adminEmails.length > 0
     ? adminEmails.map((e) => ({ email: e, name: "Kiri Wellness Admin" }))
@@ -62,12 +63,14 @@ async function sendAdminActionEmail(
 export const lookupClientByEmail = onCall(
   { region: "us-central1", invoker: "public", enforceAppCheck: false },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     const { email } = request.data as { email: string };
     if (!email) return { found: false };
 
     const normalizedEmail = email.toLowerCase().trim();
 
-    const snap = await db()
+    const snap = await database
       .collection("clients")
       .where("email", "==", normalizedEmail)
       .get();
@@ -92,7 +95,7 @@ export const lookupClientByEmail = onCall(
     };
 
     const loadPendingRewardsForClient = async (clientIdToLoad: string): Promise<object[]> => {
-      const rewardsSnap = await db()
+      const rewardsSnap = await database
         .collection("clients")
         .doc(clientIdToLoad)
         .collection("rewards")
@@ -205,11 +208,13 @@ export const lookupClientByEmail = onCall(
 export const sendVerificationCode = onCall(
   { region: "us-central1", invoker: "public", enforceAppCheck: false, secrets: SECRET_NAMES },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     const { email } = request.data as { email: string };
     if (!email) throw new HttpsError("invalid-argument", "Email requerido.");
 
     // Check client exists
-    const snap = await db()
+    const snap = await database
       .collection("clients")
       .where("email", "==", email.toLowerCase().trim())
       .limit(1)
@@ -225,7 +230,7 @@ export const sendVerificationCode = onCall(
     const hash = createHash("sha256").update(code).digest("hex");
     const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes
 
-    await db().collection("verification_codes").doc(email.toLowerCase().trim()).set({
+    await database.collection("verification_codes").doc(email.toLowerCase().trim()).set({
       hash,
       expiresAt,
       clientId: snap.docs[0].id,
@@ -252,11 +257,13 @@ export const sendVerificationCode = onCall(
 export const verifyClientCode = onCall(
   { region: "us-central1", invoker: "public", enforceAppCheck: false },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     const { email, code } = request.data as { email: string; code: string };
     if (!email || !code) throw new HttpsError("invalid-argument", "Email y código requeridos.");
 
     const normalizedEmail = email.toLowerCase().trim();
-    const verificationDoc = await db().collection("verification_codes").doc(normalizedEmail).get();
+    const verificationDoc = await database.collection("verification_codes").doc(normalizedEmail).get();
 
     if (!verificationDoc.exists) {
       throw new HttpsError("not-found", "Código inválido o expirado.");
@@ -279,7 +286,7 @@ export const verifyClientCode = onCall(
     const clientId = vData["clientId"] as string;
 
     // Return client's appointments ordered by date desc
-    const apptSnap = await db()
+    const apptSnap = await database
       .collection("appointments")
       .where("clientId", "==", clientId)
       .orderBy("date", "desc")
@@ -289,7 +296,7 @@ export const verifyClientCode = onCall(
     const appointments = apptSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 
     // Get client data
-    const clientDoc = await db().collection("clients").doc(clientId).get();
+    const clientDoc = await database.collection("clients").doc(clientId).get();
     const clientData = clientDoc.exists ? clientDoc.data() : {};
 
     return {
@@ -308,6 +315,8 @@ export const verifyClientCode = onCall(
 export const cancelAppointmentByClient = onCall(
   { region: "us-central1", invoker: "public", enforceAppCheck: false, secrets: SECRET_NAMES },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     const { appointmentId, clientId } = request.data as {
       appointmentId: string;
       clientId: string;
@@ -317,7 +326,7 @@ export const cancelAppointmentByClient = onCall(
       throw new HttpsError("invalid-argument", "Parámetros requeridos.");
     }
 
-    const apptRef = db().collection("appointments").doc(appointmentId);
+    const apptRef = database.collection("appointments").doc(appointmentId);
     const apptSnap = await apptRef.get();
 
     if (!apptSnap.exists) {
@@ -341,8 +350,8 @@ export const cancelAppointmentByClient = onCall(
 
     // Notify admin
     try {
-      const clientSnap = await db().collection("clients").doc(clientId).get();
-      await sendAdminActionEmail("cancelled", apptData, clientSnap.data() ?? {});
+      const clientSnap = await database.collection("clients").doc(clientId).get();
+      await sendAdminActionEmail("cancelled", apptData, clientSnap.data() ?? {}, database);
     } catch (e) {
       logger.warn("Failed to send cancel notification to admin", e);
     }
@@ -359,6 +368,8 @@ export const cancelAppointmentByClient = onCall(
 export const confirmAppointmentByClient = onCall(
   { region: "us-central1", invoker: "public", enforceAppCheck: false, secrets: SECRET_NAMES },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     const { appointmentId, clientId } = request.data as {
       appointmentId: string;
       clientId: string;
@@ -368,7 +379,7 @@ export const confirmAppointmentByClient = onCall(
       throw new HttpsError("invalid-argument", "Parámetros requeridos.");
     }
 
-    const apptRef = db().collection("appointments").doc(appointmentId);
+    const apptRef = database.collection("appointments").doc(appointmentId);
     const apptSnap = await apptRef.get();
 
     if (!apptSnap.exists) {
@@ -392,8 +403,8 @@ export const confirmAppointmentByClient = onCall(
 
     // Notify admin
     try {
-      const clientSnap = await db().collection("clients").doc(clientId).get();
-      await sendAdminActionEmail("confirmed", apptData, clientSnap.data() ?? {});
+      const clientSnap = await database.collection("clients").doc(clientId).get();
+      await sendAdminActionEmail("confirmed", apptData, clientSnap.data() ?? {}, database);
     } catch (e) {
       logger.warn("Failed to send confirm notification to admin", e);
     }
@@ -410,10 +421,12 @@ export const confirmAppointmentByClient = onCall(
 export const getMyAppointments = onCall(
   { region: "us-central1", invoker: "public", enforceAppCheck: false },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     const { clientId } = request.data as { clientId: string };
     if (!clientId) throw new HttpsError("invalid-argument", "clientId requerido.");
 
-    const aptsSnap = await db()
+    const aptsSnap = await database
       .collection("appointments")
       .where("clientId", "==", clientId)
       .orderBy("date", "desc")

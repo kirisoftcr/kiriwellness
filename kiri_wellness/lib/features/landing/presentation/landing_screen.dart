@@ -5,6 +5,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../../../core/config/app_firebase.dart';
 import '../../../shared/models/service_model.dart';
 import '../../../shared/models/package_model.dart';
 
@@ -276,7 +277,7 @@ class _ServicesSection extends StatelessWidget {
           ),
           const SizedBox(height: 40),
           StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
+            stream: AppFirebase.firestore
                 .collection('services')
                 .where('isActive', isEqualTo: true)
                 .snapshots(),
@@ -352,9 +353,7 @@ class _ServiceCard extends StatelessWidget {
           const SizedBox(height: 8),
           if (service.description.isNotEmpty) ...[
             Text(service.description,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.lato(fontSize: 13, color: _kTaupe, height: 1.55)),
+                style: GoogleFonts.lato(fontSize: 13, color: _kTaupe, height: 1.65)),
             const SizedBox(height: 12),
           ],
           Wrap(spacing: 8, runSpacing: 8, children: [
@@ -393,7 +392,7 @@ class _PackagesSection extends StatelessWidget {
           ),
           const SizedBox(height: 40),
           StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
+            stream: AppFirebase.firestore
                 .collection('packages')
                 .where('isActive', isEqualTo: true)
                 .snapshots(),
@@ -518,7 +517,7 @@ class _PackageLandingCard extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// About
+// About — Acerca de Nosotros / Historia del árbol Kiri
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _AboutSection extends StatelessWidget {
@@ -527,70 +526,152 @@ class _AboutSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isWide = MediaQuery.of(context).size.width >= 800;
-    return Container(
-      color: _kCream,
-      padding: EdgeInsets.symmetric(horizontal: isWide ? 80 : 24, vertical: 64),
-      child: isWide
-          ? Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-              Expanded(child: _AboutIllustration()),
-              const SizedBox(width: 60),
-              Expanded(child: _AboutText()),
-            ])
-          : Column(children: [_AboutIllustration(), const SizedBox(height: 40), _AboutText()]),
-    );
-  }
-}
-
-class _AboutIllustration extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 340,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [_kOlive, Color(0xFF6B7A5E)],
+    return Column(
+      children: [
+        // ── Historia del nombre ─────────────────────────────────────────
+        Container(
+          width: double.infinity,
+          color: _kCream,
+          padding: EdgeInsets.symmetric(
+              horizontal: isWide ? 80 : 24, vertical: 72),
+          child: isWide
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(flex: 5, child: _KiriStoryText()),
+                    const SizedBox(width: 60),
+                    Expanded(flex: 4, child: _KiriTreeIllustration()),
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _KiriStoryText(),
+                    const SizedBox(height: 40),
+                    _KiriTreeIllustration(),
+                  ],
+                ),
         ),
-      ),
-      child: Stack(children: [
-        Positioned.fill(child: CustomPaint(painter: _LeafPatternPainter())),
-        Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.self_improvement_rounded, size: 72,
-              color: _kLavLight.withValues(alpha: 0.8)),
-          const SizedBox(height: 16),
-          Text('"Tu pausa perfecta\nte espera"',
-              textAlign: TextAlign.center,
-              style: GoogleFonts.cormorantGaramond(
-                  color: Colors.white, fontSize: 20,
-                  fontStyle: FontStyle.italic, height: 1.4)),
-        ])),
-      ]),
+        // ── Pilares de valor ────────────────────────────────────────────
+        Container(
+          width: double.infinity,
+          color: _kOlive.withValues(alpha: 0.04),
+          padding: EdgeInsets.symmetric(
+              horizontal: isWide ? 80 : 24, vertical: 56),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('NUESTROS PILARES',
+                  style: GoogleFonts.lato(
+                      color: _kLavender,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 2)),
+              const SizedBox(height: 10),
+              Text('Lo que nos define',
+                  style: GoogleFonts.cormorantGaramond(
+                      fontSize: 34,
+                      fontWeight: FontWeight.w600,
+                      color: _kOlive,
+                      height: 1.2)),
+              const SizedBox(height: 32),
+              LayoutBuilder(builder: (ctx, constraints) {
+                const pillars = [
+                  _KiriValuePillar(
+                      emoji: '🌱',
+                      title: 'Crecimiento',
+                      description:
+                          'Cada sesión es un paso hacia tu mejor versión. Como el Kiri, tú también creces hacia la luz.'),
+                  _KiriValuePillar(
+                      emoji: '🌿',
+                      title: 'Renovación',
+                      description:
+                          'Restauramos tu energía y devolvemos el equilibrio a tu cuerpo y tu mente.'),
+                  _KiriValuePillar(
+                      emoji: '🌳',
+                      title: 'Arraigo',
+                      description:
+                          'Masoterapia con raíces profundas en técnicas probadas y atención completamente personalizada.'),
+                  _KiriValuePillar(
+                      emoji: '✨',
+                      title: 'Ligereza',
+                      description:
+                          'Libera tensiones acumuladas y redescubre la ligereza de tu cuerpo y tu espíritu.'),
+                ];
+                final cols = constraints.maxWidth > 700 ? 4 : 2;
+                return Wrap(
+                  spacing: 16,
+                  runSpacing: 16,
+                  children: pillars.map((p) {
+                    final w =
+                        (constraints.maxWidth - (cols - 1) * 16) / cols;
+                    return SizedBox(width: w.clamp(140.0, 320.0), child: p);
+                  }).toList(),
+                );
+              }),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
 
-class _AboutText extends StatelessWidget {
+class _KiriStoryText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('SOBRE KIRI WELLNESS',
-            style: GoogleFonts.lato(color: _kLavender, fontSize: 12,
-                fontWeight: FontWeight.w700, letterSpacing: 2)),
+        Text('ACERCA DE NOSOTROS',
+            style: GoogleFonts.lato(
+                color: _kLavender,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 2)),
         const SizedBox(height: 12),
-        Text('Masoterapia profesional\ncon corazón',
-            style: GoogleFonts.cormorantGaramond(fontSize: 34,
-                fontWeight: FontWeight.w600, color: _kOlive, height: 1.2)),
+        Text('¿Por qué Kiri Wellness?',
+            style: GoogleFonts.cormorantGaramond(
+                fontSize: 36,
+                fontWeight: FontWeight.w600,
+                color: _kOlive,
+                height: 1.2)),
         const SizedBox(height: 20),
         Text(
-          'En Kiri Wellness creemos que el bienestar es una necesidad, no un lujo. '
-          'Ofrecemos sesiones de masoterapia terapéutica y de relajación, adaptadas '
-          'a cada persona, para que puedas liberar tensiones, recuperar energía y '
-          'sentirte en equilibrio.',
-          style: GoogleFonts.lato(fontSize: 15, color: _kTaupe, height: 1.7),
+          'El Kiri es uno de los árboles de crecimiento más rápido del mundo. '
+          'Hunde sus raíces profundamente en la tierra, se renueva tras cualquier '
+          'adversidad y purifica el aire a su alrededor con cada hoja.',
+          style: GoogleFonts.lato(
+              fontSize: 15,
+              color: _kOlive,
+              height: 1.75,
+              fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          'En Kiri Wellness esa misma energía nos inspira: creemos en tu capacidad '
+          'de crecer, renovarte y encontrar equilibrio sin importar el punto de partida. '
+          'Cada sesión de masoterapia es una oportunidad de reconectar con tu cuerpo, '
+          'liberar lo que ya no necesitas y renacer con más ligereza.',
+          style: GoogleFonts.lato(fontSize: 15, color: _kTaupe, height: 1.75),
+        ),
+        const SizedBox(height: 20),
+        Container(
+          padding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: _kLavender.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(12),
+            border: Border(left: BorderSide(color: _kLavender, width: 3)),
+          ),
+          child: Text(
+            '"Bienestar que crece contigo — tu pausa perfecta."',
+            style: GoogleFonts.cormorantGaramond(
+                fontSize: 18,
+                fontStyle: FontStyle.italic,
+                color: _kLavender,
+                height: 1.5),
+          ),
         ),
         const SizedBox(height: 32),
         Wrap(spacing: 32, runSpacing: 20, children: const [
@@ -599,6 +680,177 @@ class _AboutText extends StatelessWidget {
           _AboutStat(value: '∞', label: 'Dedicación'),
         ]),
       ],
+    );
+  }
+}
+
+class _KiriTreeIllustration extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 400,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(28),
+        gradient: const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF5E6B52), _kOlive],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: _kOlive.withValues(alpha: 0.22),
+            blurRadius: 30,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Stack(
+        children: [
+          Positioned.fill(child: CustomPaint(painter: _LeafPatternPainter())),
+          Positioned(
+            top: 20,
+            right: 20,
+            child: Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _kLavender.withValues(alpha: 0.18),
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: 24,
+            left: 16,
+            child: Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _kTaupe.withValues(alpha: 0.20),
+              ),
+            ),
+          ),
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.park_rounded,
+                          size: 38,
+                          color: _kLavLight.withValues(alpha: 0.45)),
+                      const SizedBox(width: 6),
+                      Icon(Icons.park_rounded,
+                          size: 80,
+                          color: _kLavLight.withValues(alpha: 0.9)),
+                      const SizedBox(width: 6),
+                      Icon(Icons.park_rounded,
+                          size: 38,
+                          color: _kLavLight.withValues(alpha: 0.45)),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Container(
+                      height: 1.5,
+                      width: 160,
+                      color: Colors.white.withValues(alpha: 0.18)),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Paulownia · Árbol Kiri',
+                    style: GoogleFonts.lato(
+                        color: _kLavLight.withValues(alpha: 0.75),
+                        fontSize: 11,
+                        letterSpacing: 2.5,
+                        fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Crecimiento · Renovación · Arraigo',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.cormorantGaramond(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontStyle: FontStyle.italic,
+                        height: 1.4),
+                  ),
+                  const SizedBox(height: 20),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: ['🌿 Bienestar', '🌱 Crecimiento', '✨ Renovación']
+                        .map((lbl) => Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 14, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                    color:
+                                        Colors.white.withValues(alpha: 0.2)),
+                              ),
+                              child: Text(lbl,
+                                  style: GoogleFonts.lato(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600)),
+                            ))
+                        .toList(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _KiriValuePillar extends StatelessWidget {
+  final String emoji;
+  final String title;
+  final String description;
+  const _KiriValuePillar(
+      {required this.emoji,
+      required this.title,
+      required this.description});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _kCreamDark),
+        boxShadow: [
+          BoxShadow(
+              color: _kOlive.withValues(alpha: 0.05),
+              blurRadius: 12,
+              offset: const Offset(0, 4))
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(emoji, style: const TextStyle(fontSize: 28)),
+          const SizedBox(height: 12),
+          Text(title,
+              style: GoogleFonts.cormorantGaramond(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: _kOlive)),
+          const SizedBox(height: 8),
+          Text(description,
+              style: GoogleFonts.lato(
+                  fontSize: 13, color: _kTaupe, height: 1.55)),
+        ],
+      ),
     );
   }
 }
@@ -613,10 +865,14 @@ class _AboutStat extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(value, style: GoogleFonts.cormorantGaramond(
-            fontSize: 30, fontWeight: FontWeight.bold, color: _kLavender)),
-        Text(label, style: GoogleFonts.lato(
-            fontSize: 13, color: _kTaupe, fontWeight: FontWeight.w500)),
+        Text(value,
+            style: GoogleFonts.cormorantGaramond(
+                fontSize: 30, fontWeight: FontWeight.bold, color: _kLavender)),
+        Text(label,
+            style: GoogleFonts.lato(
+                fontSize: 13,
+                color: _kTaupe,
+                fontWeight: FontWeight.w500)),
       ],
     );
   }
@@ -678,9 +934,18 @@ class _ContactSection extends StatelessWidget {
             ),
             _ContactCard(
               icon: Icons.person_outline_rounded,
-              title: 'Terapeuta',
+              title: 'Masoterapeuta',
               content: 'Evelyn Hidalgo',
               onTap: null,
+            ),
+            _ContactCard(
+              icon: Icons.camera_alt_outlined,
+              title: 'Instagram',
+              content: '@kiriwellness',
+              onTap: () {
+                html.window.location.href =
+                    'https://www.instagram.com/kiriwellness';
+              },
             ),
           ],
         ),
@@ -764,10 +1029,26 @@ class _Footer extends StatelessWidget {
             height: 52,
             fit: BoxFit.contain,
           ),
-          TextButton(
-            onPressed: () { html.window.location.href = '/#/book'; },
-            child: Text('Reservar cita',
-                style: GoogleFonts.lato(color: _kLavLight, fontSize: 12)),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Tooltip(
+                message: '@kiriwellness en Instagram',
+                child: IconButton(
+                  onPressed: () {
+                    html.window.location.href =
+                        'https://www.instagram.com/kiriwellness';
+                  },
+                  icon: const Icon(Icons.camera_alt_outlined,
+                      color: _kLavLight, size: 20),
+                ),
+              ),
+              TextButton(
+                onPressed: () { html.window.location.href = '/#/book'; },
+                child: Text('Reservar cita',
+                    style: GoogleFonts.lato(color: _kLavLight, fontSize: 12)),
+              ),
+            ],
           ),
         ],
       ),

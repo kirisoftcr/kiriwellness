@@ -1,9 +1,10 @@
-import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import { getFirestore, type Firestore } from "firebase-admin/firestore";
 import { getAdminEmail, SECRET_NAMES, sendEmail } from "../config/brevo";
 import {
   adminBookingNotificationHtml,
+  appointmentConfirmedClientHtml,
   bookingConfirmationHtml,
 } from "../config/email_templates";
 
@@ -11,6 +12,7 @@ interface AppointmentData {
   clientId: string;
   serviceId: string;
   serviceName: string;
+  serviceDurationMin?: number;
   date: string; // "YYYY-MM-DD"
   time: string; // "HH:mm"
   notes?: string;
@@ -26,16 +28,10 @@ interface ClientData {
   isNew?: boolean;
 }
 
-/**
- * Firestore trigger: fires when a new appointment document is created.
- * Sends a confirmation email to the client and a notification email to admin.
- */
-export const onAppointmentCreated = onDocumentCreated(
-  {
-    document: "appointments/{appointmentId}",
-    secrets: [...SECRET_NAMES],
-  },
-  async (event) => {
+async function handleAppointmentCreated(
+  database: Firestore,
+  event: Parameters<Parameters<typeof onDocumentCreated>[1]>[0]
+): Promise<void> {
     const snap = event.data;
     if (!snap) return;
 
@@ -45,8 +41,7 @@ export const onAppointmentCreated = onDocumentCreated(
     let client: ClientData | null = null;
     let isNewClient = false;
     try {
-      const clientSnap = await admin
-        .firestore()
+      const clientSnap = await database
         .collection("clients")
         .doc(appointment.clientId)
         .get();
@@ -96,8 +91,7 @@ export const onAppointmentCreated = onDocumentCreated(
     // Fetch clientToken for direct deep link (bypasses email/OTP)
     let clientToken: string | null = null;
     try {
-      const clientSnap = await admin
-        .firestore()
+      const clientSnap = await database
         .collection("clients")
         .doc(appointment.clientId)
         .get();
@@ -121,19 +115,65 @@ export const onAppointmentCreated = onDocumentCreated(
     };
 
     const errors: string[] = [];
+    const isAlreadyConfirmed = appointment.status === "confirmed";
 
     // Send confirmation to client (if they have email)
     if (client.email) {
       try {
+        let clientSubject = `⏳ Cita por confirmar – ${appointment.serviceName} el ${formattedDate}`;
+        let clientHtml = bookingConfirmationHtml(emailParams);
+
+        if (isAlreadyConfirmed) {
+          const [hour, minute] = appointment.time.split(":").map(Number);
+          const startDt = new Date(
+            parseInt(year),
+            parseInt(month) - 1,
+            parseInt(day),
+            hour,
+            minute
+          );
+          const durationMin = appointment.serviceDurationMin ?? 60;
+          const endDt = new Date(startDt.getTime() + durationMin * 60 * 1000);
+          const fmt = (d: Date) =>
+            `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(
+              d.getDate()
+            ).padStart(2, "0")}T${String(d.getHours()).padStart(2, "0")}${String(
+              d.getMinutes()
+            ).padStart(2, "0")}00`;
+          const gcParams = new URLSearchParams({
+            action: "TEMPLATE",
+            text: `Kiri Wellness – ${appointment.serviceName}`,
+            dates: `${fmt(startDt)}/${fmt(endDt)}`,
+            details: `Servicio: ${appointment.serviceName}`,
+            location: "Kiri Wellness, Costa Rica",
+          });
+          const googleCalendarUrl = `https://calendar.google.com/calendar/render?${gcParams.toString()}`;
+
+          clientSubject = `✅ Cita confirmada – ${appointment.serviceName} el ${formattedDate}`;
+          clientHtml = appointmentConfirmedClientHtml({
+            clientName: emailParams.clientName,
+            clientCode: emailParams.clientCode,
+            serviceName: emailParams.serviceName,
+            date: emailParams.date,
+            time: emailParams.time,
+            notes: emailParams.notes,
+            myAppointmentsUrl: emailParams.myAppointmentsUrl,
+            googleCalendarUrl,
+          });
+        }
+
         await sendEmail({
           to: [{ email: client.email, name: client.firstName }],
-          subject: `✅ Cita confirmada – ${appointment.serviceName} el ${formattedDate}`,
-          htmlContent: bookingConfirmationHtml(emailParams),
+          subject: clientSubject,
+          htmlContent: clientHtml,
         });
-        logger.info("Confirmation email sent to client", client.email);
+        logger.info(
+          `Booking email sent to client (${isAlreadyConfirmed ? "confirmed" : "pending"})`,
+          client.email
+        );
       } catch (err) {
         errors.push(`client email failed: ${err}`);
-        logger.error("Failed to send client confirmation email", err);
+        logger.error("Failed to send client booking email", err);
       }
     }
 
@@ -142,7 +182,7 @@ export const onAppointmentCreated = onDocumentCreated(
     // 2. Fall back to the ADMIN_EMAIL secret if the list is empty
     let adminRecipients: Array<{ email: string; name: string }> = [];
     try {
-      const settingsSnap = await admin.firestore().collection("settings").doc("global").get();
+      const settingsSnap = await database.collection("settings").doc("global").get();
       const adminEmails: string[] = settingsSnap.data()?.["adminEmails"] ?? [];
       adminRecipients = adminEmails
         .filter((e) => !!e)
@@ -181,5 +221,29 @@ export const onAppointmentCreated = onDocumentCreated(
     if (errors.length > 0) {
       logger.warn("Email errors:", errors);
     }
+  }
+/**
+ * Firestore trigger: fires when a new appointment document is created.
+ * Sends a confirmation email to the client and a notification email to admin.
+ */
+export const onAppointmentCreated = onDocumentCreated(
+  {
+    document: "appointments/{appointmentId}",
+    database: "(default)",
+    secrets: [...SECRET_NAMES],
+  },
+  async (event) => {
+    await handleAppointmentCreated(getFirestore(), event);
+  }
+);
+
+export const onAppointmentCreatedProduction = onDocumentCreated(
+  {
+    document: "appointments/{appointmentId}",
+    database: "production",
+    secrets: [...SECRET_NAMES],
+  },
+  async (event) => {
+    await handleAppointmentCreated(getFirestore("production"), event);
   }
 );

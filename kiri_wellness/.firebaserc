@@ -7,14 +7,17 @@
   "targets": {
     "kiri-wellness-qa": {
       "hosting": {
-        "kiri-wellness-qa": [
+        "qa-client": [
           "kiri-wellness-qa"
         ],
-        "kiri-wellness-prod": [
+        "qa-admin": [
+          "kiri-wellness-admin"
+        ],
+        "prod-client": [
           "kiri-wellness-prod"
         ],
-        "kiri-wellness-admin": [
-          "kiri-wellness-admin"
+        "prod-admin": [
+          "kiri-wellness-admin-prod"
         ]
       }
     },

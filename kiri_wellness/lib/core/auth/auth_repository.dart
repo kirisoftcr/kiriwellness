@@ -1,6 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../config/app_firebase.dart';
 
 // ---------------------------------------------------------------------------
 // Auth repository
@@ -9,10 +12,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 class AuthRepository {
   final FirebaseAuth _auth;
   final FirebaseFirestore _db;
+  final FirebaseFirestore _defaultDb;
 
-  AuthRepository({FirebaseAuth? auth, FirebaseFirestore? db})
+  AuthRepository({
+    FirebaseAuth? auth,
+    FirebaseFirestore? db,
+    FirebaseFirestore? defaultDb,
+  })
       : _auth = auth ?? FirebaseAuth.instance,
-        _db = db ?? FirebaseFirestore.instance;
+        _db = db ?? AppFirebase.firestore,
+        _defaultDb =
+            defaultDb ?? FirebaseFirestore.instanceFor(app: Firebase.app());
 
   Stream<User?> get authStateChanges => _auth.authStateChanges();
 
@@ -22,6 +32,10 @@ class AuthRepository {
   /// Throws [AuthException] with a user-friendly message on failure.
   Future<void> signInAdmin(String email, String password) async {
     try {
+      if (kIsWeb) {
+        await _auth.setPersistence(Persistence.LOCAL);
+      }
+
       final credential = await _auth.signInWithEmailAndPassword(
         email: email.trim(),
         password: password.trim(),
@@ -34,9 +48,17 @@ class AuthRepository {
           .get();
 
       if (!adminDoc.exists) {
+        final fallbackAdminDoc = await _defaultDb
+            .collection('admins')
+            .doc(credential.user!.uid)
+            .get();
+
+        if (fallbackAdminDoc.exists) return;
+
         await _auth.signOut();
         throw AuthException(
-          'No tienes permiso para acceder al panel de administración.',
+          'Usuario autenticado pero sin perfil admin. No existe admins/${credential.user!.uid} '
+          'en la base ${AppFirebase.firestoreDatabaseId} ni en (default).',
         );
       }
     } on FirebaseAuthException catch (e) {
@@ -49,6 +71,10 @@ class AuthRepository {
   /// Returns the admin data for the current user, or null.
   Future<Map<String, dynamic>?> getAdminData(String uid) async {
     final doc = await _db.collection('admins').doc(uid).get();
+    if (!doc.exists) {
+      final fallbackDoc = await _defaultDb.collection('admins').doc(uid).get();
+      return fallbackDoc.data();
+    }
     return doc.data();
   }
 

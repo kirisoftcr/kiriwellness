@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Usage:
-#   ./scripts/deploy.sh qa       → builds both client+admin, deploys to QA
-#   ./scripts/deploy.sh prod     → builds both client+admin, deploys to prod
+#   ./scripts/deploy.sh qa       → builds both client+admin, deploys QA apps
+#   ./scripts/deploy.sh prod     → builds both client+admin, deploys PROD apps
+#   ./scripts/deploy.sh all      → builds and deploys all 4 apps
 #   ./scripts/deploy.sh qa client  → only client build to QA
 #   ./scripts/deploy.sh qa admin   → only admin build to QA
 
@@ -10,19 +11,22 @@ set -euo pipefail
 FLAVOR="${1:-qa}"
 SITE="${2:-all}"
 
-# Map flavor to Firebase hosting targets
-if [[ "$FLAVOR" == "prod" ]]; then
-  CLIENT_TARGET="kiri-wellness-prod"
-  ADMIN_TARGET="kiri-wellness-admin"
-  FLAVOR_DEFINE="prod"
-else
-  CLIENT_TARGET="kiri-wellness-qa"
-  ADMIN_TARGET="kiri-wellness-qa"   # QA uses the same site for simplicity
-  FLAVOR_DEFINE="qa"
-fi
+CLIENT_PROJECT="kiri-wellness-qa"
+ADMIN_PROJECT="kiri-wellness-qa"
 
-PROJECT="kiri-wellness-qa"
-BUILD_DIR="build/web"
+if [[ "$FLAVOR" == "qa" ]]; then
+  CLIENT_TARGET="qa-client"
+  ADMIN_TARGET="qa-admin"
+  FLAVOR_DEFINE="qa"
+  CLIENT_PROJECT="kiri-wellness-qa"
+  ADMIN_PROJECT="kiri-wellness-qa"
+elif [[ "$FLAVOR" == "prod" ]]; then
+  CLIENT_TARGET="prod-client"
+  ADMIN_TARGET="prod-admin"
+  FLAVOR_DEFINE="prod"
+  CLIENT_PROJECT="kiri-wellness-qa"
+  ADMIN_PROJECT="kiri-wellness-qa"
+fi
 
 deploy_client() {
   echo "📦 Building CLIENT (FLAVOR=$FLAVOR_DEFINE, SITE=client)..."
@@ -34,7 +38,7 @@ deploy_client() {
   echo "🚀 Deploying CLIENT → $CLIENT_TARGET..."
   firebase deploy \
     --only hosting:"$CLIENT_TARGET" \
-    --project "$PROJECT"
+    --project "$CLIENT_PROJECT"
 }
 
 deploy_admin() {
@@ -47,10 +51,32 @@ deploy_admin() {
   echo "🚀 Deploying ADMIN → $ADMIN_TARGET..."
   firebase deploy \
     --only hosting:"$ADMIN_TARGET" \
-    --project "$PROJECT"
+    --project "$ADMIN_PROJECT"
 }
 
-if [[ "$SITE" == "client" ]]; then
+deploy_all() {
+  echo "🔁 Deploying all apps (qa client/admin + prod client/admin)..."
+
+  FLAVOR_DEFINE="qa"
+  CLIENT_TARGET="qa-client"
+  ADMIN_TARGET="qa-admin"
+  CLIENT_PROJECT="kiri-wellness-qa"
+  ADMIN_PROJECT="kiri-wellness-qa"
+  deploy_client
+  deploy_admin
+
+  FLAVOR_DEFINE="prod"
+  CLIENT_TARGET="prod-client"
+  ADMIN_TARGET="prod-admin"
+  CLIENT_PROJECT="kiri-wellness-qa"
+  ADMIN_PROJECT="kiri-wellness-qa"
+  deploy_client
+  deploy_admin
+}
+
+if [[ "$FLAVOR" == "all" ]]; then
+  deploy_all
+elif [[ "$SITE" == "client" ]]; then
   deploy_client
 elif [[ "$SITE" == "admin" ]]; then
   deploy_admin

@@ -1,12 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/config/app_firebase.dart';
 import '../../shared/models/raffle_model.dart';
 
 class RaffleRepository {
   final FirebaseFirestore _db;
 
   RaffleRepository({FirebaseFirestore? db})
-      : _db = db ?? FirebaseFirestore.instance;
+      : _db = db ?? AppFirebase.firestore;
 
   CollectionReference<Map<String, dynamic>> get _col =>
       _db.collection('raffles');

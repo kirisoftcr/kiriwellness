@@ -1,11 +1,11 @@
 // ignore: avoid_web_libraries_in_flutter
 import 'dart:html' as html;
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import '../../../core/config/app_firebase.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/calendar_helper.dart';
 import '../../../shared/models/appointment_model.dart';
@@ -1382,7 +1382,7 @@ class _ClientRewardBookingDialogState
 
   Future<void> _loadRewards() async {
     try {
-      final snap = await FirebaseFirestore.instance
+      final snap = await AppFirebase.firestore
           .collection('clients')
           .doc(widget.clientId)
           .collection('rewards')

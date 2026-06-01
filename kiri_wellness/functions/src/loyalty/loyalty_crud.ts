@@ -2,8 +2,8 @@ import * as admin from "firebase-admin";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import { getAdminEmail, sendEmail } from "../config/brevo";
-
-const db = () => admin.firestore();
+import { type Firestore } from "firebase-admin/firestore";
+import { firestoreForCallable } from "../config/firestore_db";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -29,8 +29,9 @@ interface LoyaltyConfig {
 
 export const getLoyaltySettings = onCall(
   { region: "us-central1", invoker: "public", enforceAppCheck: false },
-  async () => {
-    const snap = await db().collection("settings").doc("loyalty").get();
+  async (request) => {
+    const database = firestoreForCallable(request);
+    const snap = await database.collection("settings").doc("loyalty").get();
     if (!snap.exists) {
       return { enabled: false, rules: [], rewardEmailSubject: "🎁 ¡Tienes una regalía en Kiri Wellness!" };
     }
@@ -43,6 +44,8 @@ export const getLoyaltySettings = onCall(
 export const updateLoyaltySettings = onCall(
   { region: "us-central1", invoker: "public" },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     }
@@ -63,7 +66,7 @@ export const updateLoyaltySettings = onCall(
       }
     }
 
-    await db().collection("settings").doc("loyalty").set(
+    await database.collection("settings").doc("loyalty").set(
       {
         enabled: Boolean(data.enabled),
         rules: (data.rules ?? []).map((r) => ({
@@ -94,6 +97,8 @@ export const updateLoyaltySettings = onCall(
 export const redeemLoyaltyReward = onCall(
   { region: "us-central1", invoker: "public" },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
     }
@@ -108,7 +113,7 @@ export const redeemLoyaltyReward = onCall(
       throw new HttpsError("invalid-argument", "clientId, rewardId y appointmentId son requeridos.");
     }
 
-    const rewardRef = db()
+    const rewardRef = database
       .collection("clients")
       .doc(clientId)
       .collection("rewards")
@@ -155,10 +160,11 @@ export const redeemLoyaltyReward = onCall(
 
 export async function checkAndGrantRewards(
   clientId: string,
-  completedCount: number
+  completedCount: number,
+  database: Firestore = admin.firestore()
 ): Promise<void> {
   // Leer configuración de regalías
-  const configSnap = await db().collection("settings").doc("loyalty").get();
+  const configSnap = await database.collection("settings").doc("loyalty").get();
   if (!configSnap.exists) return;
 
   const config = configSnap.data() as LoyaltyConfig;
@@ -168,7 +174,7 @@ export async function checkAndGrantRewards(
   if (rules.length === 0) return;
 
   // Leer datos del cliente para notificación
-  const clientSnap = await db().collection("clients").doc(clientId).get();
+  const clientSnap = await database.collection("clients").doc(clientId).get();
   const client = clientSnap.data();
 
   const rewardsToGrant: LoyaltyRule[] = [];
@@ -193,10 +199,10 @@ export async function checkAndGrantRewards(
   if (rewardsToGrant.length === 0) return;
 
   // Crear documentos de regalía y notificar al cliente
-  const batch = db().batch();
+  const batch = database.batch();
 
   for (const rule of rewardsToGrant) {
-    const rewardRef = db()
+    const rewardRef = database
       .collection("clients")
       .doc(clientId)
       .collection("rewards")
@@ -300,7 +306,7 @@ export async function checkAndGrantRewards(
 
   // Notificar también al admin
   try {
-    const settingsSnap = await db().collection("settings").doc("global").get();
+    const settingsSnap = await database.collection("settings").doc("global").get();
     const settingsData = settingsSnap.data();
     const adminEmails: string[] =
       Array.isArray(settingsData?.["adminEmails"]) && settingsData!["adminEmails"].length > 0
@@ -328,9 +334,12 @@ export async function checkAndGrantRewards(
 // Builds an HTML snippet showing the client's progress toward their next
 // loyalty reward(s). Returns null if the program is disabled or has no rules.
 
-export async function buildLoyaltyProgressHtml(clientId: string): Promise<string | null> {
+export async function buildLoyaltyProgressHtml(
+  clientId: string,
+  database: Firestore = admin.firestore()
+): Promise<string | null> {
   try {
-    const configSnap = await db().collection("settings").doc("loyalty").get();
+    const configSnap = await database.collection("settings").doc("loyalty").get();
     if (!configSnap.exists) return null;
 
     const config = configSnap.data() as LoyaltyConfig;
@@ -339,7 +348,7 @@ export async function buildLoyaltyProgressHtml(clientId: string): Promise<string
     const rules = (config.rules ?? []).filter((r) => r.enabled && r.milestone > 0);
     if (rules.length === 0) return null;
 
-    const clientSnap = await db().collection("clients").doc(clientId).get();
+    const clientSnap = await database.collection("clients").doc(clientId).get();
     const completedCount: number = clientSnap.data()?.["completedAppointments"] ?? 0;
 
     // Build progress rows — one per active rule
@@ -416,6 +425,8 @@ export async function buildLoyaltyProgressHtml(clientId: string): Promise<string
 export const createRewardAppointment = onCall(
   { region: "us-central1", invoker: "public", enforceAppCheck: false },
   async (request) => {
+    const database = firestoreForCallable(request);
+
     const { clientId, rewardId, serviceId, serviceName, date, time, notes } =
       request.data as {
         clientId: string;
@@ -430,8 +441,6 @@ export const createRewardAppointment = onCall(
     if (!clientId || !rewardId || !serviceId || !date || !time) {
       throw new HttpsError("invalid-argument", "Faltan campos requeridos.");
     }
-
-    const database = db();
 
     // 1. Validate reward
     const rewardRef = database

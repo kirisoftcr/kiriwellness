@@ -7,13 +7,15 @@ class Environment {
   static const site = String.fromEnvironment('SITE'); // 'client' | 'admin'
 
   static FirebaseOptions get firebaseOptions {
-    switch (flavor) {
-      case 'prod':
-        return prod.DefaultFirebaseOptions.currentPlatform;
-      case 'qa':
-      default:
-        return qa.DefaultFirebaseOptions.currentPlatform;
+    if (isProd) {
+      return isAdminSite
+          ? prod.DefaultFirebaseOptions.adminWeb
+          : prod.DefaultFirebaseOptions.clientWeb;
     }
+
+    return isAdminSite
+        ? qa.DefaultFirebaseOptions.adminWeb
+        : qa.DefaultFirebaseOptions.clientWeb;
   }
 
   static bool get isProd => flavor == 'prod';

@@ -1,8 +1,6 @@
-import * as admin from "firebase-admin";
 import { onCall } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
-
-const db = () => admin.firestore();
+import { firestoreForCallable } from "../config/firestore_db";
 
 /**
  * Returns available time slots for a given date and service.
@@ -16,6 +14,8 @@ const db = () => admin.firestore();
 export const getAvailableSlots = onCall(
   { region: "us-central1", invoker: "public", enforceAppCheck: false },
   async (request) => {
+      const db = firestoreForCallable(request);
+
     const { date, serviceId } = request.data as { date: string; serviceId: string };
 
     if (!date || !serviceId) {
@@ -28,18 +28,18 @@ export const getAvailableSlots = onCall(
     const isoWeekday = targetDate.getDay() === 0 ? 7 : targetDate.getDay(); // 1=Mon..7=Sun
 
     // 1. Get settings (break time)
-    const settingsSnap = await db().collection("settings").doc("global").get();
+    const settingsSnap = await db.collection("settings").doc("global").get();
     const breakMinutes: number = settingsSnap.exists
       ? ((settingsSnap.data()?.["breakMinutes"] as number) ?? 30)
       : 30;
 
     // 2. Get the service duration
-    const serviceSnap = await db().collection("services").doc(serviceId).get();
+    const serviceSnap = await db.collection("services").doc(serviceId).get();
     if (!serviceSnap.exists) return { slots: [] };
     const serviceDurationMin: number = (serviceSnap.data()?.["durationMinutes"] as number) ?? 60;
 
     // 3. Get active schedule blocks for this weekday
-    const scheduleSnap = await db()
+    const scheduleSnap = await db
       .collection("schedules")
       .where("dayOfWeek", "==", isoWeekday)
       .where("isActive", "==", true)
@@ -48,7 +48,7 @@ export const getAvailableSlots = onCall(
     if (scheduleSnap.empty) return { slots: [] };
 
     // 4. Get all non-cancelled appointments for this date
-    const apptSnap = await db()
+    const apptSnap = await db
       .collection("appointments")
       .where("date", "==", date)
       .where("status", "in", ["requested", "confirmed"])

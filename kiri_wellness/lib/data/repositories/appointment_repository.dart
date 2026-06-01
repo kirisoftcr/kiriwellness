@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/config/app_firebase.dart';
 import '../../core/auth/auth_repository.dart';
 import '../../shared/models/appointment_model.dart';
 
@@ -9,7 +10,7 @@ class AppointmentRepository {
   final FirebaseFunctions _functions;
 
   AppointmentRepository({FirebaseFirestore? db, FirebaseFunctions? functions})
-      : _db = db ?? FirebaseFirestore.instance,
+      : _db = db ?? AppFirebase.firestore,
         _functions = functions ?? FirebaseFunctions.instanceFor(region: "us-central1");
 
   CollectionReference<Map<String, dynamic>> get _col =>

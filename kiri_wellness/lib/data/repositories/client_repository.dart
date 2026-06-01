@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/config/app_firebase.dart';
 import '../../core/auth/auth_repository.dart';
 import '../../shared/models/client_model.dart';
 
@@ -7,7 +8,7 @@ class ClientRepository {
   final FirebaseFirestore _db;
 
   ClientRepository({FirebaseFirestore? db})
-      : _db = db ?? FirebaseFirestore.instance;
+      : _db = db ?? AppFirebase.firestore;
 
   CollectionReference<Map<String, dynamic>> get _col =>
       _db.collection('clients');

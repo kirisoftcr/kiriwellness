@@ -1,8 +1,7 @@
 import * as admin from "firebase-admin";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
-
-const db = () => admin.firestore();
+import { firestoreForCallable } from "../config/firestore_db";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -38,7 +37,7 @@ export const createSchedule = onCall(
       throw new HttpsError("invalid-argument", "La hora de inicio debe ser anterior a la hora de fin.");
     }
 
-    const ref = db().collection("schedules").doc();
+    const ref = firestoreForCallable(request).collection("schedules").doc();
     await ref.set({
       dayOfWeek: Number(data.dayOfWeek),
       startTime: data.startTime.trim(),
@@ -74,7 +73,7 @@ export const updateSchedule = onCall(
       throw new HttpsError("invalid-argument", "La hora de inicio debe ser anterior a la hora de fin.");
     }
 
-    await db()
+    await firestoreForCallable(request)
       .collection("schedules")
       .doc(id)
       .update({
@@ -104,7 +103,7 @@ export const deleteSchedule = onCall(
       throw new HttpsError("invalid-argument", "Se requiere el ID del horario.");
     }
 
-    await db().collection("schedules").doc(id).delete();
+    await firestoreForCallable(request).collection("schedules").doc(id).delete();
 
     logger.info("Schedule deleted", id);
     return { success: true };

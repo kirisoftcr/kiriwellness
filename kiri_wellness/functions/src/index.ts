@@ -5,7 +5,7 @@ admin.initializeApp();
 
 // Export all Cloud Functions
 export { createBooking } from "./booking/create_booking";
-export { onAppointmentCreated } from "./booking/on_appointment_created";
+export { onAppointmentCreated, onAppointmentCreatedProduction } from "./booking/on_appointment_created";
 export { sendReminders } from "./reminders/send_reminders";
 export { listServices, createService, updateService, deleteService } from "./services/services_crud";
 export { createSchedule, updateSchedule, deleteSchedule } from "./schedule/schedule_crud";
