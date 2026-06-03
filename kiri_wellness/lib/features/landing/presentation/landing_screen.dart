@@ -24,17 +24,32 @@ class LandingScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDesktop = MediaQuery.of(context).size.width >= 1100;
     return Scaffold(
       backgroundColor: Colors.white,
       body: SingleChildScrollView(
         child: Column(
           children: [
+            // Hero ocupa 100% de ancho
             _HeroSection(onBook: () => context.go('/book')),
-            const _BenefitsStrip(),
-            const _ServicesSection(),
-            const _PackagesSection(),
-            const _AboutSection(),
-            const _ContactSection(),
+            // Contenido central limitado a 1440px
+            Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: isDesktop ? 1440 : double.infinity,
+                ),
+                child: const Column(
+                  children: [
+                    _BenefitsStrip(),
+                    _ServicesSection(),
+                    _PackagesSection(),
+                    _AboutSection(),
+                    _ContactSection(),
+                  ],
+                ),
+              ),
+            ),
+            // Footer ocupa 100% de ancho
             const _Footer(),
           ],
         ),
@@ -53,66 +68,50 @@ class _HeroSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDesktop = MediaQuery.of(context).size.width >= 1100;
-    return Container(
+    final width = MediaQuery.of(context).size.width;
+    final isDesktop = width >= 1100;
+    final isTablet = width >= 700;
+
+    return SizedBox(
       width: double.infinity,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            const Color(0xFFFCF9F4),
-            const Color(0xFFF6EFE5),
-          ],
-        ),
-      ),
-      child: Padding(
-        padding: EdgeInsets.symmetric(
-          horizontal: isDesktop ? 80 : 24,
-          vertical: isDesktop ? 112 : 78,
-        ),
-        child: isDesktop
-            ? Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(
-                    flex: 4,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 460),
-                        child: Image.asset(
-                          'assets/images/kiriwellness.png',
-                          fit: BoxFit.contain,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 46),
-                  Expanded(
-                    flex: 8,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _HeroText(
-                          onBook: onBook,
-                          centered: false,
-                          showLogo: false,
-                        ),
-                        const SizedBox(height: 28),
-                        const _HeroMassageImage(),
-                      ],
-                    ),
-                  ),
+      height: isDesktop ? 680 : (isTablet ? 620 : 560),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.asset(
+            'assets/images/herokiri.png',
+            fit: BoxFit.cover,
+            alignment: Alignment.center,
+            errorBuilder: (_, __, ___) => Container(color: _kCreamDark),
+          ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  const Color(0xFF1E1A17).withValues(alpha: 0.66),
+                  const Color(0xFF1E1A17).withValues(alpha: 0.38),
+                  const Color(0xFF1E1A17).withValues(alpha: 0.58),
                 ],
-              )
-            : Align(
-                alignment: Alignment.centerLeft,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 760),
-                  child: _HeroText(onBook: onBook, centered: false),
+              ),
+            ),
+          ),
+          Center(
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: isDesktop ? 48 : 22),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 900),
+                child: _HeroText(
+                  onBook: onBook,
+                  centered: true,
+                  showLogo: false,
+                  overImage: true,
                 ),
               ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -122,7 +121,13 @@ class _HeroText extends StatelessWidget {
   final VoidCallback onBook;
   final bool centered;
   final bool showLogo;
-  const _HeroText({required this.onBook, this.centered = false, this.showLogo = true});
+  final bool overImage;
+  const _HeroText({
+    required this.onBook,
+    this.centered = false,
+    this.showLogo = true,
+    this.overImage = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -143,11 +148,11 @@ class _HeroText extends StatelessWidget {
           const SizedBox(height: 36),
         ],
         Text(
-          'Tu momento de\nbienestar comienza aquí',
+          'Tu momento de bienestar\ncomienza con nosotros',
           textAlign: centered ? TextAlign.center : TextAlign.start,
           style: GoogleFonts.cormorantGaramond(
-            color: _kOlive,
-            fontSize: isWide ? 58 : 44,
+            color: overImage ? Colors.white : _kOlive,
+            fontSize: overImage ? (isWide ? 70 : 46) : (isWide ? 58 : 44),
             fontWeight: FontWeight.w700,
             height: 1.1,
           ),
@@ -157,10 +162,10 @@ class _HeroText extends StatelessWidget {
           'Masoterapia profesional para aliviar tensiones,\nrestaurar tu energía y cuidar tu cuerpo.',
           textAlign: centered ? TextAlign.center : TextAlign.start,
           style: GoogleFonts.lato(
-            color: _kTaupe,
-            fontSize: isWide ? 22 : 18,
-            height: 1.6,
-            fontWeight: FontWeight.w500,
+            color: overImage ? Colors.white.withValues(alpha: 0.9) : _kTaupe,
+            fontSize: overImage ? (isWide ? 41 / 2 : 34 / 2) : (isWide ? 22 : 18),
+            height: overImage ? 1.45 : 1.6,
+            fontWeight: overImage ? FontWeight.w600 : FontWeight.w500,
           ),
         ),
         const SizedBox(height: 44),
@@ -169,79 +174,29 @@ class _HeroText extends StatelessWidget {
           runSpacing: 12,
           alignment: centered ? WrapAlignment.center : WrapAlignment.start,
           children: [
-            ElevatedButton.icon(
+            ElevatedButton(
               onPressed: onBook,
-              icon: const Icon(Icons.calendar_today_rounded, size: 17),
-              label: const Text('Reservar una cita'),
+              child: const Text('Reserva tu cita'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: _kOlive,
+                backgroundColor: overImage ? _kLavender : _kOlive,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
-                textStyle: GoogleFonts.lato(fontSize: 15, fontWeight: FontWeight.w700),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(50)),
-                elevation: 0,
+                padding: EdgeInsets.symmetric(
+                  horizontal: overImage ? 34 : 28,
+                  vertical: overImage ? 18 : 16,
+                ),
+                textStyle: GoogleFonts.lato(
+                  fontSize: overImage ? 18 : 15,
+                  fontWeight: FontWeight.w700,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(50),
+                ),
+                elevation: overImage ? 2 : 0,
               ),
             ),
           ],
         ),
       ],
-    );
-  }
-}
-
-class _HeroMassageImage extends StatelessWidget {
-  const _HeroMassageImage();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      constraints: const BoxConstraints(maxWidth: 640),
-      height: 250,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: _kTaupe.withValues(alpha: 0.12)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.012),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(18),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            Image.network(
-              'https://images.unsplash.com/photo-1544161515-4ab6ce6db874?auto=format&fit=crop&w=1600&q=80',
-              fit: BoxFit.cover,
-              alignment: Alignment.center,
-              errorBuilder: (_, __, ___) => Container(
-                color: _kCreamDark,
-                alignment: Alignment.center,
-                child: Text(
-                  'Imagen no disponible',
-                  style: GoogleFonts.lato(color: _kTaupe),
-                ),
-              ),
-            ),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.bottomCenter,
-                  end: Alignment.center,
-                  colors: [
-                    _kOlive.withValues(alpha: 0.24),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -1073,33 +1028,23 @@ class _Footer extends StatelessWidget {
       color: const Color(0xFF353D2E),
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Image.asset(
-            'assets/images/kiriwellness.png',
-            height: 52,
-            fit: BoxFit.contain,
+          Tooltip(
+            message: '@kiriwellness en Instagram',
+            child: IconButton(
+              onPressed: () {
+                html.window.location.href =
+                    'https://www.instagram.com/kiriwellness';
+              },
+              icon: const Icon(Icons.camera_alt_outlined,
+                  color: _kLavLight, size: 20),
+            ),
           ),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Tooltip(
-                message: '@kiriwellness en Instagram',
-                child: IconButton(
-                  onPressed: () {
-                    html.window.location.href =
-                        'https://www.instagram.com/kiriwellness';
-                  },
-                  icon: const Icon(Icons.camera_alt_outlined,
-                      color: _kLavLight, size: 20),
-                ),
-              ),
-              TextButton(
-                onPressed: () { html.window.location.href = '/#/book'; },
-                child: Text('Reservar cita',
-                    style: GoogleFonts.lato(color: _kLavLight, fontSize: 12)),
-              ),
-            ],
+          TextButton(
+            onPressed: () { html.window.location.href = '/#/book'; },
+            child: Text('Reservar cita',
+                style: GoogleFonts.lato(color: _kLavLight, fontSize: 12)),
           ),
         ],
       ),
