@@ -47,6 +47,10 @@ class AppointmentModel {
   final AppointmentStatus status;
   final DateTime? createdAt;
   final bool isReward;
+  /// Code of the gift card used for this appointment
+  final String? giftCardCode;
+  /// Firestore ID of the gift card document
+  final String? giftCardId;
 
   const AppointmentModel({
     required this.id,
@@ -66,6 +70,8 @@ class AppointmentModel {
     required this.status,
     this.createdAt,
     this.isReward = false,
+    this.giftCardCode,
+    this.giftCardId,
   });
 
   factory AppointmentModel.fromFirestore(DocumentSnapshot doc) {
@@ -88,6 +94,8 @@ class AppointmentModel {
       status: AppointmentStatusX.fromString(d['status'] as String?),
       createdAt: (d['createdAt'] as Timestamp?)?.toDate(),
       isReward: d['isReward'] as bool? ?? false,
+      giftCardCode: d['giftCardCode'] as String?,
+      giftCardId: d['giftCardId'] as String?,
     );
   }
 
@@ -110,6 +118,8 @@ class AppointmentModel {
       status: AppointmentStatusX.fromString(d['status'] as String?),
       createdAt: null,
       isReward: d['isReward'] as bool? ?? false,
+      giftCardCode: d['giftCardCode'] as String?,
+      giftCardId: d['giftCardId'] as String?,
     );
   }
 
@@ -131,7 +141,7 @@ class AppointmentModel {
     return '$h:${minute.toString().padLeft(2, '0')} $amPm';
   }
 
-  AppointmentModel copyWith({AppointmentStatus? status, String? notes}) {
+  AppointmentModel copyWith({AppointmentStatus? status, String? notes, String? giftCardCode, String? giftCardId}) {
     return AppointmentModel(
       id: id,
       clientId: clientId,
@@ -150,6 +160,8 @@ class AppointmentModel {
       status: status ?? this.status,
       createdAt: createdAt,
       isReward: isReward,
+      giftCardCode: giftCardCode ?? this.giftCardCode,
+      giftCardId: giftCardId ?? this.giftCardId,
     );
   }
 }

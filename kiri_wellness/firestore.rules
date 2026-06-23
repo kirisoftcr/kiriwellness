@@ -89,5 +89,13 @@ service cloud.firestore {
         allow read, write: if isAuthenticated();
       }
     }
+
+    // Gift Cards
+    // - Public can validate an active code (needed for the booking page)
+    // - All writes (create, update) require authentication (admin)
+    match /gift_cards/{cardId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
   }
 }

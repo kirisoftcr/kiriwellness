@@ -10,6 +10,7 @@ import '../../../data/repositories/client_repository.dart';
 import '../../../data/repositories/service_repository.dart';
 import '../../../data/repositories/package_repository.dart';
 import '../../../data/repositories/loyalty_repository.dart';
+import '../../../data/repositories/gift_card_repository.dart';
 import '../../../shared/models/appointment_model.dart';
 import '../../../shared/models/client_model.dart';
 import '../../../shared/models/service_model.dart';
@@ -177,6 +178,17 @@ class _AppointmentCardState extends ConsumerState<_AppointmentCard> {
       await ref
           .read(appointmentRepositoryProvider)
           .updateStatus(widget.appointment.id, status);
+
+      // If completing and the appointment had a gift card, mark it as redeemed
+      if (status == AppointmentStatus.completed) {
+        final giftCardId = widget.appointment.giftCardId;
+        if (giftCardId != null && giftCardId.isNotEmpty) {
+          await ref.read(giftCardRepositoryProvider).markAsRedeemed(
+                giftCardId,
+                appointmentId: widget.appointment.id,
+              );
+        }
+      }
     } on Exception catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

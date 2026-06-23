@@ -13,6 +13,8 @@ import '../../../data/repositories/service_repository.dart';
 import '../../../data/repositories/package_repository.dart';
 import '../../../data/repositories/loyalty_repository.dart';
 import '../../loyalty/presentation/client_rewards_panel.dart';
+import '../../../shared/models/gift_card_model.dart';
+import '../../../data/repositories/gift_card_repository.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Screen
@@ -651,7 +653,7 @@ class _ClientFormDialogState extends ConsumerState<_ClientFormDialog> {
 // New Appointment Dialog
 // ─────────────────────────────────────────────────────────────────────────────
 
-enum _AppointmentBookingMode { regular, packageSession, reward }
+enum _AppointmentBookingMode { regular, packageSession, reward, giftCard }
 
 class _NewAppointmentDialog extends ConsumerStatefulWidget {
   final ClientModel client;
@@ -680,6 +682,12 @@ class _NewAppointmentDialogState
   ClientReward? _selectedReward;
 
   bool _loadingOptions = false;
+
+  // Gift card
+  final _giftCardCodeCtrl = TextEditingController();
+  GiftCardModel? _validatedGiftCard;
+  bool _validatingGiftCard = false;
+  String? _giftCardCodeError;
 
   // Common
   DateTime? _selectedDate;
@@ -736,12 +744,14 @@ class _NewAppointmentDialogState
   @override
   void dispose() {
     _notesCtrl.dispose();
+    _giftCardCodeCtrl.dispose();
     super.dispose();
   }
 
   String? get _effectiveServiceId {
     return switch (_bookingMode) {
       _AppointmentBookingMode.regular => _selectedService?.id,
+      _AppointmentBookingMode.giftCard => _selectedService?.id,
       _AppointmentBookingMode.packageSession =>
         _selectedPackageService?.serviceId,
       _AppointmentBookingMode.reward => _selectedReward?.serviceId,
@@ -798,6 +808,42 @@ class _NewAppointmentDialogState
     }
   }
 
+  Future<void> _validateGiftCard() async {
+    final code = _giftCardCodeCtrl.text.trim().toUpperCase();
+    if (code.isEmpty) {
+      setState(() => _giftCardCodeError = 'Ingresa el código de la tarjeta.');
+      return;
+    }
+    setState(() {
+      _validatingGiftCard = true;
+      _giftCardCodeError = null;
+      _validatedGiftCard = null;
+    });
+    try {
+      final card =
+          await ref.read(giftCardRepositoryProvider).validateCode(code);
+      if (!mounted) return;
+      if (card == null) {
+        setState(() {
+          _giftCardCodeError = 'Tarjeta no encontrada o no está activa.';
+          _validatingGiftCard = false;
+        });
+      } else {
+        setState(() {
+          _validatedGiftCard = card;
+          _validatingGiftCard = false;
+          _giftCardCodeError = null;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _giftCardCodeError = 'Error al validar: $e';
+        _validatingGiftCard = false;
+      });
+    }
+  }
+
   Future<void> _submit() async {
     final serviceId = _effectiveServiceId;
     if (serviceId == null || _selectedDate == null || _selectedTime == null) {
@@ -812,6 +858,11 @@ class _NewAppointmentDialogState
     if (_bookingMode == _AppointmentBookingMode.reward &&
         _selectedReward == null) {
       setState(() => _error = 'Selecciona una regalía.');
+      return;
+    }
+    if (_bookingMode == _AppointmentBookingMode.giftCard &&
+        _validatedGiftCard == null) {
+      setState(() => _error = 'Debes validar una tarjeta de regalo activa.');
       return;
     }
     final dateStr =
@@ -866,22 +917,40 @@ class _NewAppointmentDialogState
               );
         }
       } else {
-        await ref.read(appointmentRepositoryProvider).createBooking(
-              firstName: widget.client.name,
-              lastName: widget.client.lastName,
-              phone: widget.client.phone,
-              email: widget.client.email,
-              serviceId: _selectedService!.id,
-              serviceName: _selectedService!.name,
-              serviceDurationMin: _selectedService!.durationMinutes,
-              servicePrice: _selectedService!.price,
-              date: dateStr,
-              time: _selectedTime!,
-              notes: _notesCtrl.text.trim().isEmpty
-                  ? null
-                  : _notesCtrl.text.trim(),
-              confirmDirectly: _confirmDirectly,
-            );
+        // Regular or Gift Card booking
+        final bookingResult =
+            await ref.read(appointmentRepositoryProvider).createBooking(
+                  firstName: widget.client.name,
+                  lastName: widget.client.lastName,
+                  phone: widget.client.phone,
+                  email: widget.client.email,
+                  serviceId: _selectedService!.id,
+                  serviceName: _selectedService!.name,
+                  serviceDurationMin: _selectedService!.durationMinutes,
+                  servicePrice:
+                      _bookingMode == _AppointmentBookingMode.giftCard
+                          ? 0
+                          : _selectedService!.price,
+                  date: dateStr,
+                  time: _selectedTime!,
+                  notes: _notesCtrl.text.trim().isEmpty
+                      ? null
+                      : _notesCtrl.text.trim(),
+                  confirmDirectly: _confirmDirectly,
+                );
+        // Link gift card to the appointment (it will be marked as redeemed
+        // automatically when the appointment status changes to completed)
+        if (_bookingMode == _AppointmentBookingMode.giftCard &&
+            _validatedGiftCard != null) {
+          final aptId = bookingResult['appointmentId'] as String?;
+          if (aptId != null) {
+            await ref.read(appointmentRepositoryProvider).linkGiftCard(
+                  aptId,
+                  giftCardId: _validatedGiftCard!.id,
+                  giftCardCode: _validatedGiftCard!.code,
+                );
+          }
+        }
       }
       if (mounted) {
         Navigator.pop(context);
@@ -906,7 +975,6 @@ class _NewAppointmentDialogState
   @override
   Widget build(BuildContext context) {
     final servicesAsync = ref.watch(activeServicesStreamProvider);
-    final hasOptions = _activePackages.isNotEmpty || _pendingRewards.isNotEmpty;
 
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -955,7 +1023,7 @@ class _NewAppointmentDialogState
                               strokeWidth: 2,
                               color: AppTheme.primary))),
                 )
-              else if (hasOptions) ...[  
+              else ...[
                 const Text('Tipo de reserva',
                     style: TextStyle(
                         fontSize: 12,
@@ -964,6 +1032,7 @@ class _NewAppointmentDialogState
                 const SizedBox(height: 6),
                 Wrap(
                   spacing: 6,
+                  runSpacing: 6,
                   children: [
                     _ModeChip(
                       label: 'Regular',
@@ -972,6 +1041,18 @@ class _NewAppointmentDialogState
                           _AppointmentBookingMode.regular,
                       onTap: () => setState(() {
                         _bookingMode = _AppointmentBookingMode.regular;
+                        _selectedDate = null;
+                        _selectedTime = null;
+                        _slots = [];
+                      }),
+                    ),
+                    _ModeChip(
+                      label: 'Tarjeta de regalo',
+                      icon: Icons.redeem_outlined,
+                      selected:
+                          _bookingMode == _AppointmentBookingMode.giftCard,
+                      onTap: () => setState(() {
+                        _bookingMode = _AppointmentBookingMode.giftCard;
                         _selectedDate = null;
                         _selectedTime = null;
                         _slots = [];
@@ -1136,6 +1217,138 @@ class _NewAppointmentDialogState
                   ),
                 ],
               ],
+              // ── Gift card: code input + service selector ───────────────
+              if (_bookingMode == _AppointmentBookingMode.giftCard) ...[  
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: _giftCardCodeCtrl,
+                        textCapitalization: TextCapitalization.characters,
+                        decoration: InputDecoration(
+                          labelText: 'Código de tarjeta de regalo *',
+                          hintText: 'KIRI-XXXXXX',
+                          errorText: _giftCardCodeError,
+                        ),
+                        onChanged: (_) => setState(() {
+                          _validatedGiftCard = null;
+                          _giftCardCodeError = null;
+                        }),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: _validatingGiftCard
+                          ? const SizedBox(
+                              width: 72,
+                              height: 48,
+                              child: Center(
+                                  child: SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: AppTheme.primary))),
+                            )
+                          : ElevatedButton(
+                              onPressed: _validateGiftCard,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppTheme.primary,
+                                foregroundColor: Colors.white,
+                                minimumSize: const Size(72, 48),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8)),
+                              ),
+                              child: const Text('Validar',
+                                  style: TextStyle(fontSize: 12)),
+                            ),
+                    ),
+                  ],
+                ),
+                if (_validatedGiftCard != null) ...[  
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.green.shade300),
+                    ),
+                    child: Row(children: [
+                      Icon(Icons.check_circle_outline,
+                          color: Colors.green.shade600, size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Tarjeta válida – ${_validatedGiftCard!.code}',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 12,
+                                  color: Colors.green.shade700),
+                            ),
+                            if (_validatedGiftCard!.buyerName != null &&
+                                _validatedGiftCard!.buyerName!.isNotEmpty)
+                              Text(
+                                'Comprador: ${_validatedGiftCard!.buyerName}',
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.green.shade600),
+                              ),
+                          ],
+                        ),
+                      ),
+                      InkWell(
+                        onTap: () => setState(() {
+                          _validatedGiftCard = null;
+                          _giftCardCodeCtrl.clear();
+                          _giftCardCodeError = null;
+                        }),
+                        borderRadius: BorderRadius.circular(12),
+                        child: Padding(
+                          padding: const EdgeInsets.all(4),
+                          child: Icon(Icons.close,
+                              size: 14, color: Colors.green.shade600),
+                        ),
+                      ),
+                    ]),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                // Service selector (same as regular)
+                servicesAsync.when(
+                  loading: () => const Center(
+                      child: CircularProgressIndicator(
+                          color: AppTheme.primary, strokeWidth: 2)),
+                  error: (e, _) => Text('Error: $e',
+                      style: const TextStyle(color: AppTheme.error)),
+                  data: (services) =>
+                      DropdownButtonFormField<ServiceModel>(
+                    value: _selectedService,
+                    decoration:
+                        const InputDecoration(labelText: 'Servicio *'),
+                    items: services
+                        .map((s) => DropdownMenuItem(
+                              value: s,
+                              child: Text(
+                                  '${s.name} (${s.durationMinutes} min)'),
+                            ))
+                        .toList(),
+                    onChanged: (s) {
+                      setState(() {
+                        _selectedService = s;
+                        _selectedTime = null;
+                        _slots = [];
+                      });
+                      if (s != null && _selectedDate != null) _loadSlots();
+                    },
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               // ── Date picker ───────────────────────────────────────────────
               InkWell(
@@ -1200,7 +1413,8 @@ class _NewAppointmentDialogState
                 decoration:
                     const InputDecoration(labelText: 'Notas (opcional)'),
               ),
-              if (_bookingMode == _AppointmentBookingMode.regular) ...[  
+              if (_bookingMode == _AppointmentBookingMode.regular ||
+                  _bookingMode == _AppointmentBookingMode.giftCard) ...[  
                 const SizedBox(height: 8),
                 CheckboxListTile(
                   value: _confirmDirectly,

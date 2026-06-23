@@ -25,6 +25,8 @@ class BookingState {
   final String? clientCode; // KW-XXXXX assigned after submission
   final String? clientId;  // Firestore document ID
   final String? prefilledEmail; // set in step2 email lookup
+  final String? giftCardCode;  // gift card code entered by user
+  final String? giftCardId;    // Firestore gift card document ID
 
   const BookingState({
     this.step = 0,
@@ -40,6 +42,8 @@ class BookingState {
     this.clientCode,
     this.clientId,
     this.prefilledEmail,
+    this.giftCardCode,
+    this.giftCardId,
   });
 
   BookingState copyWith({
@@ -56,6 +60,8 @@ class BookingState {
     String? clientCode,
     String? clientId,
     String? prefilledEmail,
+    String? giftCardCode,
+    String? giftCardId,
   }) {
     return BookingState(
       step: step ?? this.step,
@@ -71,6 +77,8 @@ class BookingState {
       clientCode: clientCode ?? this.clientCode,
       clientId: clientId ?? this.clientId,
       prefilledEmail: prefilledEmail ?? this.prefilledEmail,
+      giftCardCode: giftCardCode ?? this.giftCardCode,
+      giftCardId: giftCardId ?? this.giftCardId,
     );
   }
 }
@@ -89,6 +97,12 @@ class BookingNotifier extends StateNotifier<BookingState> {
 
   void setPrefilledEmail(String email) =>
       state = state.copyWith(prefilledEmail: email);
+
+  void setGiftCard({required String code, required String id}) =>
+      state = state.copyWith(giftCardCode: code, giftCardId: id);
+
+  void clearGiftCard() =>
+      state = state.copyWith(giftCardCode: '', giftCardId: '');
 
   void goToStep3() => state = state.copyWith(step: 2);
 

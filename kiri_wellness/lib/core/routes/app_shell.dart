@@ -27,6 +27,7 @@ const _navItems = [
   _NavItem(label: 'Horarios', icon: Icons.schedule_outlined, activeIcon: Icons.schedule, route: '/schedule'),
   _NavItem(label: 'Configuración', icon: Icons.settings_outlined, activeIcon: Icons.settings, route: '/settings'),
   _NavItem(label: 'Reportes', icon: Icons.bar_chart_outlined, activeIcon: Icons.bar_chart, route: '/reports'),
+  _NavItem(label: 'Gift Cards', icon: Icons.card_giftcard_outlined, activeIcon: Icons.card_giftcard, route: '/gift-cards'),
 ];
 
 class AppShell extends ConsumerWidget {

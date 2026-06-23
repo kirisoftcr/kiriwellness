@@ -5,6 +5,7 @@ import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../data/repositories/appointment_repository.dart';
+import '../../../../data/repositories/gift_card_repository.dart';
 import '../booking_page.dart';
 
 // ---------------------------------------------------------------------------
@@ -226,6 +227,19 @@ class _Step2DateTimeState extends ConsumerState<Step2DateTime> {
       });
 
       final data = result.data;
+      final appointmentId = data['appointmentId'] as String?;
+
+      // Link gift card to the appointment (if one was applied)
+      if (appointmentId != null &&
+          booking.giftCardId != null &&
+          booking.giftCardId!.isNotEmpty) {
+        await ref.read(appointmentRepositoryProvider).linkGiftCard(
+              appointmentId,
+              giftCardId: booking.giftCardId!,
+              giftCardCode: booking.giftCardCode!,
+            );
+      }
+
       notifier.submitWithClient(
         clientCode: data['clientCode'] as String,
         clientId: data['clientId'] as String,
@@ -624,9 +638,17 @@ class _Step2DateTimeState extends ConsumerState<Step2DateTime> {
             '* Recibirás la confirmación por WhatsApp o correo electrónico.',
             style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
 
-          // ── 8. Confirm directly checkbox (admin) ─────────────────────────
+          // ── 8. Gift card code ─────────────────────────────────────────────
+          _GiftCardSection(
+            onValidated: (code, id) =>
+                ref.read(bookingProvider.notifier).setGiftCard(code: code, id: id),
+            onCleared: () => ref.read(bookingProvider.notifier).clearGiftCard(),
+          ),
+          const SizedBox(height: 8),
+
+          // ── 9. Confirm directly checkbox (admin) ─────────────────────────
           CheckboxListTile(
             value: _confirmDirectly,
             onChanged: (v) => setState(() => _confirmDirectly = v ?? false),
@@ -1430,6 +1452,178 @@ class _OtpDialogState extends State<_OtpDialog> {
           ),
         ),
       ),
+    );
+  }
+}
+// ---------------------------------------------------------------------------
+// Gift Card Section
+// ---------------------------------------------------------------------------
+
+class _GiftCardSection extends ConsumerStatefulWidget {
+  final void Function(String code, String id) onValidated;
+  final VoidCallback onCleared;
+
+  const _GiftCardSection({
+    required this.onValidated,
+    required this.onCleared,
+  });
+
+  @override
+  ConsumerState<_GiftCardSection> createState() => _GiftCardSectionState();
+}
+
+class _GiftCardSectionState extends ConsumerState<_GiftCardSection> {
+  final _ctrl = TextEditingController();
+  bool _expanded = false;
+  bool _loading = false;
+  bool _valid = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _validate() async {
+    final code = _ctrl.text.trim().toUpperCase();
+    if (code.isEmpty) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+      _valid = false;
+    });
+    try {
+      final card =
+          await ref.read(giftCardRepositoryProvider).validateCode(code);
+      if (card != null) {
+        setState(() => _valid = true);
+        widget.onValidated(card.code, card.id);
+      } else {
+        setState(() => _error = 'Código no válido o ya fue utilizado');
+        widget.onCleared();
+      }
+    } catch (e) {
+      setState(() => _error = 'Error al validar el código');
+      widget.onCleared();
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _clear() {
+    _ctrl.clear();
+    setState(() {
+      _valid = false;
+      _error = null;
+    });
+    widget.onCleared();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: _valid
+                  ? AppTheme.success.withValues(alpha: 0.08)
+                  : AppTheme.oliveLight,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: _valid
+                    ? AppTheme.success
+                    : AppTheme.textSecondary.withValues(alpha: 0.2),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  _valid
+                      ? Icons.card_giftcard
+                      : Icons.card_giftcard_outlined,
+                  color: _valid ? AppTheme.success : AppTheme.textSecondary,
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    _valid
+                        ? '✅ Tarjeta de regalo aplicada: ${_ctrl.text.trim().toUpperCase()}'
+                        : '¿Tienes una tarjeta de regalo?',
+                    style: TextStyle(
+                      color: _valid
+                          ? AppTheme.success
+                          : AppTheme.textSecondary,
+                      fontSize: 13,
+                      fontWeight:
+                          _valid ? FontWeight.w600 : FontWeight.normal,
+                    ),
+                  ),
+                ),
+                if (_valid)
+                  GestureDetector(
+                    onTap: _clear,
+                    child: const Icon(Icons.close,
+                        size: 18, color: AppTheme.textSecondary),
+                  )
+                else
+                  Icon(
+                    _expanded
+                        ? Icons.keyboard_arrow_up
+                        : Icons.keyboard_arrow_down,
+                    color: AppTheme.textSecondary,
+                    size: 18,
+                  ),
+              ],
+            ),
+          ),
+        ),
+        if (_expanded && !_valid) ...[
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(
+              child: TextField(
+                controller: _ctrl,
+                textCapitalization: TextCapitalization.characters,
+                decoration: InputDecoration(
+                  hintText: 'KIRI-XXXXXX',
+                  filled: true,
+                  fillColor: AppTheme.surface,
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  errorText: _error,
+                  prefixIcon: const Icon(Icons.qr_code_outlined),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            FilledButton(
+              onPressed: _loading ? null : _validate,
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.primaryDark,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 18),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              child: _loading
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Text('Validar'),
+            ),
+          ]),
+        ],
+      ],
     );
   }
 }

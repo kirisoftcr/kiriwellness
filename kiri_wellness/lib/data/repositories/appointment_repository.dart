@@ -69,6 +69,18 @@ class AppointmentRepository {
     });
   }
 
+  /// Stores gift card info directly on the appointment document.
+  Future<void> linkGiftCard(
+    String appointmentId, {
+    required String giftCardId,
+    required String giftCardCode,
+  }) async {
+    await _col.doc(appointmentId).update({
+      'giftCardId': giftCardId,
+      'giftCardCode': giftCardCode,
+    });
+  }
+
   Future<Map<String, dynamic>> createBooking({
     required String firstName,
     required String lastName,
