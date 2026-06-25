@@ -10,7 +10,15 @@ import * as logger from "firebase-functions/logger";
 //   SENDER_EMAIL    — verified sender address in Brevo (also used as SMTP login)
 //   ADMIN_EMAIL     — fallback admin address when adminEmails list is empty
 
-export const SECRET_NAMES = ["BREVO_SMTP_KEY", "BREVO_SMTP_LOGIN", "SENDER_EMAIL", "ADMIN_EMAIL"];
+export const SECRET_NAMES = [
+  "BREVO_SMTP_KEY",
+  "BREVO_SMTP_LOGIN",
+  "SENDER_EMAIL",
+  "ADMIN_EMAIL",
+  // WhatsApp Business Cloud API (Meta)
+  "WHATSAPP_TOKEN",
+  "WHATSAPP_PHONE_ID",
+];
 
 export function getSmtpKey(): string {
   return (process.env["BREVO_SMTP_KEY"] ?? "").trim();

@@ -6,6 +6,12 @@ import { adminBookingNotificationHtml, appointmentConfirmedClientHtml, appointme
 import { checkAndGrantRewards, buildLoyaltyProgressHtml } from "../loyalty/loyalty_crud";
 import { usePackageSession } from "../packages/packages_crud";
 import { firestoreForCallable } from "../config/firestore_db";
+import { sendWhatsAppMessage } from "../config/whatsapp";
+import {
+  whatsAppBookingConfirmedMessage,
+  whatsAppBookingCancelledMessage,
+  whatsAppThankYouMessage,
+} from "../config/whatsapp_templates";
 
 // ---------------------------------------------------------------------------
 // getSettings (public — used by booking flow to know break time)
@@ -153,6 +159,24 @@ export const updateAppointmentStatus = onCall(
               logger.warn("Thank-you email failed", thankYouErr);
             }
           }
+
+          // ── WhatsApp thank-you message ─────────────────────────────────
+          const clientPhone: string | undefined = clientSnap2.data()?.["phone"];
+          if (clientPhone) {
+            const baseUrlWA = "https://kiriwellness.com";
+            const clientTokenWA: string | undefined = clientSnap2.data()?.["clientToken"];
+            const myAppointmentsUrlWA = clientTokenWA
+              ? `${baseUrlWA}/#/my-appointments?token=${clientTokenWA}`
+              : `${baseUrlWA}/#/my-appointments`;
+            await sendWhatsAppMessage(
+              clientPhone,
+              whatsAppThankYouMessage({
+                clientName: clientSnap2.data()?.["firstName"] ?? clientSnap2.data()?.["name"] ?? "Cliente",
+                serviceName: apt["serviceName"] ?? "",
+                myAppointmentsUrl: myAppointmentsUrlWA,
+              })
+            );
+          }
         }
       } catch (loyaltyErr) {
         // Never fail the status update because of loyalty/package logic
@@ -254,6 +278,26 @@ export const updateAppointmentStatus = onCall(
           }),
         });
         logger.info(`Admin notification sent for status: ${status}`);
+
+        // ── WhatsApp notification to client ────────────────────────────────
+        const clientPhone: string | undefined = client?.["phone"];
+        if (clientPhone) {
+          const whatsAppBody = status === "confirmed"
+            ? whatsAppBookingConfirmedMessage({
+                clientName: commonParams.clientName,
+                serviceName: commonParams.serviceName,
+                date: formattedDate,
+                time: commonParams.time,
+                myAppointmentsUrl,
+              })
+            : whatsAppBookingCancelledMessage({
+                clientName: commonParams.clientName,
+                serviceName: commonParams.serviceName,
+                date: formattedDate,
+                time: commonParams.time,
+              });
+          await sendWhatsAppMessage(clientPhone, whatsAppBody);
+        }
       } catch (emailErr) {
         // Don't fail the function — the status update already succeeded
         logger.warn("Email sending failed after confirmation", emailErr);

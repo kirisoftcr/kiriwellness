@@ -3,6 +3,8 @@ import * as logger from "firebase-functions/logger";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { SECRET_NAMES, sendEmail } from "../config/brevo";
 import { appointmentReminderHtml } from "../config/email_templates";
+import { sendWhatsAppMessage } from "../config/whatsapp";
+import { whatsAppAppointmentReminderMessage } from "../config/whatsapp_templates";
 
 /**
  * Scheduled function: runs every day at 9:00 AM Costa Rica time (UTC-6).
@@ -83,6 +85,20 @@ export const sendReminders = onSchedule(
 
         sent++;
         logger.info(`Reminder sent to ${clientEmail} for appointment ${doc.id}`);
+
+        // Also send WhatsApp reminder if the client has a phone number
+        const clientPhone: string = client["phone"] ?? "";
+        if (clientPhone) {
+          await sendWhatsAppMessage(
+            clientPhone,
+            whatsAppAppointmentReminderMessage({
+              clientName,
+              serviceName: apt["serviceName"] ?? "",
+              date: formattedDate,
+              time: apt["time"] ?? "",
+            })
+          );
+        }
       } catch (err) {
         failed++;
         logger.error(`Failed to send reminder for appointment ${doc.id}:`, err);

@@ -7,6 +7,11 @@ import {
   appointmentConfirmedClientHtml,
   bookingConfirmationHtml,
 } from "../config/email_templates";
+import { sendWhatsAppMessage } from "../config/whatsapp";
+import {
+  whatsAppBookingPendingMessage,
+  whatsAppBookingConfirmedMessage,
+} from "../config/whatsapp_templates";
 
 interface AppointmentData {
   clientId: string;
@@ -174,6 +179,30 @@ async function handleAppointmentCreated(
       } catch (err) {
         errors.push(`client email failed: ${err}`);
         logger.error("Failed to send client booking email", err);
+      }
+    }
+
+    // Send WhatsApp notification to client (if they have a phone number)
+    if (client.phone) {
+      try {
+        const whatsAppBody = isAlreadyConfirmed
+          ? whatsAppBookingConfirmedMessage({
+              clientName: client.firstName,
+              serviceName: appointment.serviceName,
+              date: formattedDate,
+              time: appointment.time,
+              myAppointmentsUrl,
+            })
+          : whatsAppBookingPendingMessage({
+              clientName: client.firstName,
+              serviceName: appointment.serviceName,
+              date: formattedDate,
+              time: appointment.time,
+              myAppointmentsUrl,
+            });
+        await sendWhatsAppMessage(client.phone, whatsAppBody);
+      } catch (err) {
+        logger.warn("WhatsApp notification failed for client on booking created", err);
       }
     }
 

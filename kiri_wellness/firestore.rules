@@ -97,5 +97,15 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAuthenticated();
     }
+
+    // Reviews / Testimonials
+    // - Anyone can read approved reviews (landing page public)
+    // - Anyone can create a new review (submit form, status = pending)
+    // - Only admins (authenticated) can update/delete (approve, reject, delete)
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if isAuthenticated();
+    }
   }
 }

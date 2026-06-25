@@ -19,6 +19,7 @@ import '../../features/schedule/presentation/schedule_screen.dart';
 import '../../features/settings/presentation/settings_screen.dart';
 import '../../features/reports/presentation/reports_screen.dart';
 import '../../features/gift_cards/presentation/gift_cards_screen.dart';
+import '../../features/reviews/presentation/reviews_screen.dart';
 import 'app_shell.dart';
 
 /// A [ChangeNotifier] that notifies GoRouter whenever the auth state changes.
@@ -169,6 +170,12 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/gift-cards',
             pageBuilder: (context, state) => const NoTransitionPage(
               child: GiftCardsScreen(),
+            ),
+          ),
+          GoRoute(
+            path: '/reviews',
+            pageBuilder: (context, state) => const NoTransitionPage(
+              child: ReviewsScreen(),
             ),
           ),
         ],

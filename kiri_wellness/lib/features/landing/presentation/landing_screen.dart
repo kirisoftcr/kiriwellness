@@ -8,6 +8,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../core/config/app_firebase.dart';
 import '../../../shared/models/service_model.dart';
 import '../../../shared/models/package_model.dart';
+import '../../../shared/models/review_model.dart';
 
 // ─── Brand palette ────────────────────────────────────────────────────────────
 // Extracted from the official Kiri Wellness brand guide
@@ -38,13 +39,14 @@ class LandingScreen extends StatelessWidget {
                 constraints: BoxConstraints(
                   maxWidth: isDesktop ? 1440 : double.infinity,
                 ),
-                child: const Column(
+                child: Column(
                   children: [
-                    _BenefitsStrip(),
-                    _ServicesSection(),
-                    _PackagesSection(),
-                    _AboutSection(),
-                    _ContactSection(),
+                    const _BenefitsStrip(),
+                    const _ServicesSection(),
+                    const _PackagesSection(),
+                    const _AboutSection(),
+                    const _TestimonialsSection(),
+                    const _ContactSection(),
                   ],
                 ),
               ),
@@ -1520,6 +1522,462 @@ class _SuccessView extends StatelessWidget {
                   GoogleFonts.lato(fontWeight: FontWeight.w700, fontSize: 14)),
         ),
       ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Testimonials / Reseñas
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _TestimonialsSection extends StatelessWidget {
+  const _TestimonialsSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final isWide = MediaQuery.of(context).size.width >= 800;
+    return Container(
+      width: double.infinity,
+      color: _kCream,
+      padding: EdgeInsets.symmetric(
+          horizontal: isWide ? 80 : 24, vertical: 88),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Encabezado ──────────────────────────────────────────────
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('LO QUE DICEN NUESTROS CLIENTES',
+                        style: GoogleFonts.lato(
+                            color: _kLavender,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 2)),
+                    const SizedBox(height: 10),
+                    Text('Testimonios reales',
+                        style: GoogleFonts.cormorantGaramond(
+                            fontSize: 34,
+                            fontWeight: FontWeight.w600,
+                            color: _kOlive,
+                            height: 1.2)),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 16),
+              OutlinedButton.icon(
+                onPressed: () => showDialog(
+                  context: context,
+                  builder: (_) => const _SubmitReviewDialog(),
+                ),
+                icon: const Icon(Icons.rate_review_outlined, size: 16),
+                label: const Text('Deja tu reseña'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _kLavender,
+                  side: const BorderSide(color: _kLavender),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 20, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(50)),
+                  textStyle: GoogleFonts.lato(
+                      fontSize: 14, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 52),
+          // ── Cards ────────────────────────────────────────────────────
+          StreamBuilder<QuerySnapshot>(
+            stream: AppFirebase.firestore
+                .collection('reviews')
+                .where('status', isEqualTo: 'approved')
+                .orderBy('createdAt', descending: true)
+                .snapshots(),
+            builder: (context, snap) {
+              if (snap.connectionState == ConnectionState.waiting) {
+                return const Center(
+                    child: CircularProgressIndicator(color: _kOlive));
+              }
+              if (!snap.hasData || snap.data!.docs.isEmpty) {
+                return Center(
+                  child: Text(
+                    'Aún no hay reseñas. ¡Sé el primero en dejar la tuya!',
+                    style: GoogleFonts.lato(
+                        color: _kTaupe, fontSize: 15, height: 1.6),
+                    textAlign: TextAlign.center,
+                  ),
+                );
+              }
+              final reviews = snap.data!.docs
+                  .map(ReviewModel.fromFirestore)
+                  .toList();
+              return LayoutBuilder(builder: (ctx, constraints) {
+                final cols = constraints.maxWidth > 900
+                    ? 3
+                    : (constraints.maxWidth > 560 ? 2 : 1);
+                final cardW = (constraints.maxWidth - (cols - 1) * 20) / cols;
+                return Wrap(
+                  spacing: 20,
+                  runSpacing: 20,
+                  children: reviews
+                      .map((r) => _ReviewCard(review: r, width: cardW))
+                      .toList(),
+                );
+              });
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReviewCard extends StatelessWidget {
+  final ReviewModel review;
+  final double width;
+  const _ReviewCard({required this.review, required this.width});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: width,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border:
+            Border.all(color: _kTaupe.withValues(alpha: 0.12), width: 1),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 12,
+              offset: const Offset(0, 4))
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Comillas decorativas
+          Text('"',
+              style: GoogleFonts.cormorantGaramond(
+                  fontSize: 48,
+                  color: _kLavender.withValues(alpha: 0.35),
+                  height: 0.8,
+                  fontStyle: FontStyle.italic)),
+          const SizedBox(height: 8),
+          Text(review.reviewText,
+              style: GoogleFonts.lato(
+                  fontSize: 14, color: _kOlive, height: 1.7)),
+          const SizedBox(height: 16),
+          // Estrellas
+          Row(children: List.generate(5, (i) {
+            return Icon(
+              i < review.rating.round()
+                  ? Icons.star_rounded
+                  : Icons.star_outline_rounded,
+              color: const Color(0xFFD4A017),
+              size: 16,
+            );
+          })),
+          const SizedBox(height: 12),
+          const Divider(height: 1, color: Color(0xFFF0EBE3)),
+          const SizedBox(height: 14),
+          Row(children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _kLavender.withValues(alpha: 0.15),
+              ),
+              child: Center(
+                child: Text(
+                  review.clientName.isNotEmpty
+                      ? review.clientName[0].toUpperCase()
+                      : '?',
+                  style: GoogleFonts.cormorantGaramond(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: _kLavender),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(review.displayName,
+                style: GoogleFonts.lato(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: _kOlive)),
+          ]),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Submit Review Dialog
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _SubmitReviewDialog extends StatefulWidget {
+  const _SubmitReviewDialog();
+
+  @override
+  State<_SubmitReviewDialog> createState() => _SubmitReviewDialogState();
+}
+
+enum _ReviewPhase { form, loading, success }
+
+class _SubmitReviewDialogState extends State<_SubmitReviewDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameCtrl = TextEditingController();
+  final _lastNameCtrl = TextEditingController();
+  final _reviewCtrl = TextEditingController();
+  double _rating = 5;
+  _ReviewPhase _phase = _ReviewPhase.form;
+  String? _error;
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _lastNameCtrl.dispose();
+    _reviewCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() {
+      _phase = _ReviewPhase.loading;
+      _error = null;
+    });
+    try {
+      await AppFirebase.firestore.collection('reviews').doc().set({
+        'clientName': _nameCtrl.text.trim(),
+        'clientLastName': _lastNameCtrl.text.trim(),
+        'reviewText': _reviewCtrl.text.trim(),
+        'rating': _rating,
+        'status': 'pending',
+        'createdAt': Timestamp.fromDate(DateTime.now()),
+      });
+      if (mounted) setState(() => _phase = _ReviewPhase.success);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _phase = _ReviewPhase.form;
+          _error = 'Ocurrió un error al enviar tu reseña. Intenta de nuevo.';
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      backgroundColor: Colors.white,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: _phase == _ReviewPhase.success
+              ? _buildSuccess()
+              : _buildForm(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSuccess() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const SizedBox(height: 8),
+        Container(
+          width: 64,
+          height: 64,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: _kOlive.withValues(alpha: 0.1),
+          ),
+          child: const Icon(Icons.check_circle_outline,
+              color: _kOlive, size: 36),
+        ),
+        const SizedBox(height: 20),
+        Text('¡Gracias por tu reseña!',
+            style: GoogleFonts.cormorantGaramond(
+                fontSize: 24,
+                fontWeight: FontWeight.w700,
+                color: _kOlive),
+            textAlign: TextAlign.center),
+        const SizedBox(height: 12),
+        Text(
+          'Tu reseña fue recibida y será publicada una vez revisada por nuestro equipo.',
+          style: GoogleFonts.lato(
+              fontSize: 14, color: _kTaupe, height: 1.6),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 28),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(),
+          style: FilledButton.styleFrom(
+            backgroundColor: _kLavender,
+            padding:
+                const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10)),
+          ),
+          child: Text('Cerrar',
+              style: GoogleFonts.lato(
+                  fontWeight: FontWeight.w700, fontSize: 14)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildForm() {
+    InputDecoration dec(String label, String hint, IconData icon) =>
+        InputDecoration(
+          labelText: label,
+          hintText: hint,
+          prefixIcon: Icon(icon, size: 18, color: _kTaupe),
+          labelStyle: GoogleFonts.lato(color: _kTaupe, fontSize: 13),
+          hintStyle: GoogleFonts.lato(color: _kTaupe.withValues(alpha: 0.5), fontSize: 13),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: _kTaupe.withValues(alpha: 0.25)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: _kLavender),
+          ),
+          errorBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: Colors.red.shade300),
+          ),
+          focusedErrorBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: Colors.red.shade400),
+          ),
+          contentPadding:
+              const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+        );
+
+    return Form(
+      key: _formKey,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Deja tu reseña',
+              style: GoogleFonts.cormorantGaramond(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w700,
+                  color: _kOlive)),
+          const SizedBox(height: 4),
+          Text('Tu opinión nos ayuda a crecer 🌱',
+              style: GoogleFonts.lato(fontSize: 13, color: _kTaupe)),
+          const SizedBox(height: 20),
+          // Nombre + Apellido
+          Row(children: [
+            Expanded(
+              child: TextFormField(
+                controller: _nameCtrl,
+                textCapitalization: TextCapitalization.words,
+                decoration:
+                    dec('Nombre', 'Ej. Fabian', Icons.person_outline),
+                validator: (v) => (v == null || v.trim().isEmpty)
+                    ? 'Requerido'
+                    : null,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextFormField(
+                controller: _lastNameCtrl,
+                textCapitalization: TextCapitalization.words,
+                decoration:
+                    dec('Apellido', 'Ej. Vega', Icons.person_outline),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 12),
+          // Reseña
+          TextFormField(
+            controller: _reviewCtrl,
+            maxLines: 4,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: dec('Tu reseña', 'Ej. Excelente servicio, muy profesional…',
+                Icons.rate_review_outlined),
+            validator: (v) => (v == null || v.trim().length < 10)
+                ? 'Por favor escribe al menos 10 caracteres'
+                : null,
+          ),
+          const SizedBox(height: 16),
+          // Rating de estrellas
+          Text('Calificación',
+              style: GoogleFonts.lato(
+                  fontSize: 13,
+                  color: _kTaupe,
+                  fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: List.generate(5, (i) {
+              return GestureDetector(
+                onTap: () => setState(() => _rating = (i + 1).toDouble()),
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: Icon(
+                    i < _rating ? Icons.star_rounded : Icons.star_outline_rounded,
+                    color: const Color(0xFFD4A017),
+                    size: 28,
+                  ),
+                ),
+              );
+            }),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 10),
+            Text(_error!,
+                style: GoogleFonts.lato(
+                    color: Colors.red.shade700, fontSize: 13),
+                textAlign: TextAlign.center),
+          ],
+          const SizedBox(height: 20),
+          Row(children: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text('Cancelar',
+                  style: GoogleFonts.lato(color: _kTaupe, fontSize: 13)),
+            ),
+            const Spacer(),
+            FilledButton(
+              onPressed: _phase == _ReviewPhase.loading ? null : _submit,
+              style: FilledButton.styleFrom(
+                backgroundColor: _kLavender,
+                padding: const EdgeInsets.symmetric(
+                    vertical: 14, horizontal: 24),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              child: _phase == _ReviewPhase.loading
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : Text('Enviar reseña',
+                      style: GoogleFonts.lato(
+                          fontWeight: FontWeight.w700, fontSize: 15)),
+            ),
+          ]),
+        ],
+      ),
     );
   }
 }
