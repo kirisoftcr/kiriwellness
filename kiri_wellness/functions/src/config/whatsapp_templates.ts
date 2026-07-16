@@ -1,3 +1,5 @@
+import type { WhatsAppTemplateComponent } from "./whatsapp";
+
 /**
  * Plain-text WhatsApp message templates for appointment notifications.
  *
@@ -9,8 +11,12 @@
  * Keep messages concise — WhatsApp renders them in a mobile chat bubble.
  *
  * For production proactive messaging (business-initiated), register equivalent
- * templates in Meta Business Manager and use sendWhatsAppTemplate() instead.
- * Template names suggested below match each function name for clarity.
+ * templates in Meta Business Manager and use sendWhatsAppTemplate() /
+ * sendWhatsAppWithFallback() instead. Template names, language code, and the
+ * exact body text to paste into Meta Business Manager are defined below in
+ * WHATSAPP_TEMPLATE_NAMES / WHATSAPP_TEMPLATE_BODY / the *TemplateComponents()
+ * builders — the {{n}} parameter order in each body text MUST match the order
+ * of `parameters` returned by its matching builder.
  */
 
 // ---------------------------------------------------------------------------
@@ -138,4 +144,156 @@ export function whatsAppThankYouMessage(params: {
     `Tu bienestar es nuestra prioridad. ¡Nos encanta verte por aquí!\n\n` +
     `Agenda tu próxima cita en:\n${params.myAppointmentsUrl}`
   );
+}
+
+// ---------------------------------------------------------------------------
+// Meta template definitions (for sendWhatsAppTemplate / sendWhatsAppWithFallback)
+//
+// These templates must be created and approved in Meta Business Manager →
+// WhatsApp → Message Templates before they will work. Use category "UTILITY",
+// this language code, and paste the body text below exactly — the {{n}}
+// parameter order there matches the order of `parameters` in each builder.
+// ---------------------------------------------------------------------------
+
+export const WHATSAPP_TEMPLATE_LANGUAGE = "es";
+
+export const WHATSAPP_TEMPLATE_NAMES = {
+  bookingPending: "kiri_booking_pending",
+  bookingConfirmed: "kiri_booking_confirmed",
+  bookingCancelled: "kiri_booking_cancelled",
+  appointmentReminder: "kiri_appointment_reminder",
+  appointmentThankyou: "kiri_appointment_thankyou",
+} as const;
+
+export const WHATSAPP_TEMPLATE_BODY = {
+  bookingPending:
+    "Hola {{1}}. Hemos recibido tu solicitud de cita en Kiri Wellness.\n\n" +
+    "Detalles de tu cita:\n" +
+    "Servicio: {{2}}\n" +
+    "Fecha: {{3}}\n" +
+    "Hora: {{4}}\n\n" +
+    "Tu cita esta pendiente de confirmacion. Te contactaremos pronto.\n\n" +
+    "Consulta el estado de tu cita aqui: {{5}}",
+  bookingConfirmed:
+    "Hola {{1}}. Tu cita en Kiri Wellness ha sido confirmada.\n\n" +
+    "Detalles:\n" +
+    "Servicio: {{2}}\n" +
+    "Fecha: {{3}}\n" +
+    "Hora: {{4}}\n\n" +
+    "Puedes ver o cancelar tu cita aqui: {{5}}",
+  bookingCancelled:
+    "Hola {{1}}. Tu cita en Kiri Wellness ha sido cancelada.\n\n" +
+    "Detalles:\n" +
+    "Servicio: {{2}}\n" +
+    "Fecha: {{3}}\n" +
+    "Hora: {{4}}\n\n" +
+    "Si deseas agendar una nueva cita, visitanos en https://kiriwellness.com",
+  appointmentReminder:
+    "Hola {{1}}. Te recordamos que manana tienes una cita en Kiri Wellness.\n\n" +
+    "Detalles:\n" +
+    "Servicio: {{2}}\n" +
+    "Fecha: {{3}}\n" +
+    "Hora: {{4}}\n\n" +
+    "Si necesitas cancelar o reagendar, contactanos con anticipacion.",
+  appointmentThankyou:
+    "Hola {{1}}. Fue un placer recibirte hoy en Kiri Wellness.\n\n" +
+    "Esperamos que hayas disfrutado tu sesion de {{2}}.\n\n" +
+    "Agenda tu proxima cita aqui: {{3}}",
+} as const;
+
+export function bookingPendingTemplateComponents(params: {
+  clientName: string;
+  serviceName: string;
+  date: string;
+  time: string;
+  myAppointmentsUrl: string;
+}): WhatsAppTemplateComponent[] {
+  return [
+    {
+      type: "body",
+      parameters: [
+        { type: "text", text: params.clientName },
+        { type: "text", text: params.serviceName },
+        { type: "text", text: params.date },
+        { type: "text", text: formatTime12h(params.time) },
+        { type: "text", text: params.myAppointmentsUrl },
+      ],
+    },
+  ];
+}
+
+export function bookingConfirmedTemplateComponents(params: {
+  clientName: string;
+  serviceName: string;
+  date: string;
+  time: string;
+  myAppointmentsUrl: string;
+}): WhatsAppTemplateComponent[] {
+  return [
+    {
+      type: "body",
+      parameters: [
+        { type: "text", text: params.clientName },
+        { type: "text", text: params.serviceName },
+        { type: "text", text: params.date },
+        { type: "text", text: formatTime12h(params.time) },
+        { type: "text", text: params.myAppointmentsUrl },
+      ],
+    },
+  ];
+}
+
+export function bookingCancelledTemplateComponents(params: {
+  clientName: string;
+  serviceName: string;
+  date: string;
+  time: string;
+}): WhatsAppTemplateComponent[] {
+  return [
+    {
+      type: "body",
+      parameters: [
+        { type: "text", text: params.clientName },
+        { type: "text", text: params.serviceName },
+        { type: "text", text: params.date },
+        { type: "text", text: formatTime12h(params.time) },
+      ],
+    },
+  ];
+}
+
+export function appointmentReminderTemplateComponents(params: {
+  clientName: string;
+  serviceName: string;
+  date: string;
+  time: string;
+}): WhatsAppTemplateComponent[] {
+  return [
+    {
+      type: "body",
+      parameters: [
+        { type: "text", text: params.clientName },
+        { type: "text", text: params.serviceName },
+        { type: "text", text: params.date },
+        { type: "text", text: formatTime12h(params.time) },
+      ],
+    },
+  ];
+}
+
+export function appointmentThankyouTemplateComponents(params: {
+  clientName: string;
+  serviceName: string;
+  myAppointmentsUrl: string;
+}): WhatsAppTemplateComponent[] {
+  return [
+    {
+      type: "body",
+      parameters: [
+        { type: "text", text: params.clientName },
+        { type: "text", text: params.serviceName },
+        { type: "text", text: params.myAppointmentsUrl },
+      ],
+    },
+  ];
 }

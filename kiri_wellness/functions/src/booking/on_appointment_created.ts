@@ -7,10 +7,14 @@ import {
   appointmentConfirmedClientHtml,
   bookingConfirmationHtml,
 } from "../config/email_templates";
-import { sendWhatsAppMessage } from "../config/whatsapp";
+import { sendWhatsAppWithFallback } from "../config/whatsapp";
 import {
   whatsAppBookingPendingMessage,
   whatsAppBookingConfirmedMessage,
+  bookingPendingTemplateComponents,
+  bookingConfirmedTemplateComponents,
+  WHATSAPP_TEMPLATE_NAMES,
+  WHATSAPP_TEMPLATE_LANGUAGE,
 } from "../config/whatsapp_templates";
 
 interface AppointmentData {
@@ -185,22 +189,29 @@ async function handleAppointmentCreated(
     // Send WhatsApp notification to client (if they have a phone number)
     if (client.phone) {
       try {
+        const whatsAppParams = {
+          clientName: client.firstName,
+          serviceName: appointment.serviceName,
+          date: formattedDate,
+          time: appointment.time,
+          myAppointmentsUrl,
+        };
         const whatsAppBody = isAlreadyConfirmed
-          ? whatsAppBookingConfirmedMessage({
-              clientName: client.firstName,
-              serviceName: appointment.serviceName,
-              date: formattedDate,
-              time: appointment.time,
-              myAppointmentsUrl,
-            })
-          : whatsAppBookingPendingMessage({
-              clientName: client.firstName,
-              serviceName: appointment.serviceName,
-              date: formattedDate,
-              time: appointment.time,
-              myAppointmentsUrl,
-            });
-        await sendWhatsAppMessage(client.phone, whatsAppBody);
+          ? whatsAppBookingConfirmedMessage(whatsAppParams)
+          : whatsAppBookingPendingMessage(whatsAppParams);
+        const templateName = isAlreadyConfirmed
+          ? WHATSAPP_TEMPLATE_NAMES.bookingConfirmed
+          : WHATSAPP_TEMPLATE_NAMES.bookingPending;
+        const templateComponents = isAlreadyConfirmed
+          ? bookingConfirmedTemplateComponents(whatsAppParams)
+          : bookingPendingTemplateComponents(whatsAppParams);
+        await sendWhatsAppWithFallback(
+          client.phone,
+          whatsAppBody,
+          templateName,
+          WHATSAPP_TEMPLATE_LANGUAGE,
+          templateComponents
+        );
       } catch (err) {
         logger.warn("WhatsApp notification failed for client on booking created", err);
       }

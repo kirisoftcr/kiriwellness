@@ -6,11 +6,16 @@ import { adminBookingNotificationHtml, appointmentConfirmedClientHtml, appointme
 import { checkAndGrantRewards, buildLoyaltyProgressHtml } from "../loyalty/loyalty_crud";
 import { usePackageSession } from "../packages/packages_crud";
 import { firestoreForCallable } from "../config/firestore_db";
-import { sendWhatsAppMessage } from "../config/whatsapp";
+import { sendWhatsAppWithFallback } from "../config/whatsapp";
 import {
   whatsAppBookingConfirmedMessage,
   whatsAppBookingCancelledMessage,
   whatsAppThankYouMessage,
+  bookingConfirmedTemplateComponents,
+  bookingCancelledTemplateComponents,
+  appointmentThankyouTemplateComponents,
+  WHATSAPP_TEMPLATE_NAMES,
+  WHATSAPP_TEMPLATE_LANGUAGE,
 } from "../config/whatsapp_templates";
 
 // ---------------------------------------------------------------------------
@@ -168,13 +173,17 @@ export const updateAppointmentStatus = onCall(
             const myAppointmentsUrlWA = clientTokenWA
               ? `${baseUrlWA}/#/my-appointments?token=${clientTokenWA}`
               : `${baseUrlWA}/#/my-appointments`;
-            await sendWhatsAppMessage(
+            const thankYouParams = {
+              clientName: clientSnap2.data()?.["firstName"] ?? clientSnap2.data()?.["name"] ?? "Cliente",
+              serviceName: apt["serviceName"] ?? "",
+              myAppointmentsUrl: myAppointmentsUrlWA,
+            };
+            await sendWhatsAppWithFallback(
               clientPhone,
-              whatsAppThankYouMessage({
-                clientName: clientSnap2.data()?.["firstName"] ?? clientSnap2.data()?.["name"] ?? "Cliente",
-                serviceName: apt["serviceName"] ?? "",
-                myAppointmentsUrl: myAppointmentsUrlWA,
-              })
+              whatsAppThankYouMessage(thankYouParams),
+              WHATSAPP_TEMPLATE_NAMES.appointmentThankyou,
+              WHATSAPP_TEMPLATE_LANGUAGE,
+              appointmentThankyouTemplateComponents(thankYouParams)
             );
           }
         }
@@ -282,21 +291,36 @@ export const updateAppointmentStatus = onCall(
         // ── WhatsApp notification to client ────────────────────────────────
         const clientPhone: string | undefined = client?.["phone"];
         if (clientPhone) {
-          const whatsAppBody = status === "confirmed"
-            ? whatsAppBookingConfirmedMessage({
-                clientName: commonParams.clientName,
-                serviceName: commonParams.serviceName,
-                date: formattedDate,
-                time: commonParams.time,
-                myAppointmentsUrl,
-              })
-            : whatsAppBookingCancelledMessage({
-                clientName: commonParams.clientName,
-                serviceName: commonParams.serviceName,
-                date: formattedDate,
-                time: commonParams.time,
-              });
-          await sendWhatsAppMessage(clientPhone, whatsAppBody);
+          if (status === "confirmed") {
+            const confirmedParams = {
+              clientName: commonParams.clientName,
+              serviceName: commonParams.serviceName,
+              date: formattedDate,
+              time: commonParams.time,
+              myAppointmentsUrl,
+            };
+            await sendWhatsAppWithFallback(
+              clientPhone,
+              whatsAppBookingConfirmedMessage(confirmedParams),
+              WHATSAPP_TEMPLATE_NAMES.bookingConfirmed,
+              WHATSAPP_TEMPLATE_LANGUAGE,
+              bookingConfirmedTemplateComponents(confirmedParams)
+            );
+          } else {
+            const cancelledParams = {
+              clientName: commonParams.clientName,
+              serviceName: commonParams.serviceName,
+              date: formattedDate,
+              time: commonParams.time,
+            };
+            await sendWhatsAppWithFallback(
+              clientPhone,
+              whatsAppBookingCancelledMessage(cancelledParams),
+              WHATSAPP_TEMPLATE_NAMES.bookingCancelled,
+              WHATSAPP_TEMPLATE_LANGUAGE,
+              bookingCancelledTemplateComponents(cancelledParams)
+            );
+          }
         }
       } catch (emailErr) {
         // Don't fail the function — the status update already succeeded

@@ -3,8 +3,13 @@ import * as logger from "firebase-functions/logger";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { SECRET_NAMES, sendEmail } from "../config/brevo";
 import { appointmentReminderHtml } from "../config/email_templates";
-import { sendWhatsAppMessage } from "../config/whatsapp";
-import { whatsAppAppointmentReminderMessage } from "../config/whatsapp_templates";
+import { sendWhatsAppWithFallback } from "../config/whatsapp";
+import {
+  whatsAppAppointmentReminderMessage,
+  appointmentReminderTemplateComponents,
+  WHATSAPP_TEMPLATE_NAMES,
+  WHATSAPP_TEMPLATE_LANGUAGE,
+} from "../config/whatsapp_templates";
 
 /**
  * Scheduled function: runs every day at 9:00 AM Costa Rica time (UTC-6).
@@ -65,38 +70,44 @@ export const sendReminders = onSchedule(
 
         const client = clientSnap.data()!;
         const clientEmail: string = client["email"] ?? "";
+        const clientPhone: string = client["phone"] ?? "";
         const clientName: string = client["firstName"] ?? "cliente";
 
-        if (!clientEmail) {
-          logger.info(`No email for client ${apt["clientId"]}, skipping.`);
+        if (!clientEmail && !clientPhone) {
+          logger.info(`No email or phone for client ${apt["clientId"]}, skipping.`);
           continue;
         }
 
-        await sendEmail({
-          to: [{ email: clientEmail, name: clientName }],
-          subject: `⏰ Recordatorio: tu cita mañana – ${apt["serviceName"]}`,
-          htmlContent: appointmentReminderHtml({
-            clientName,
-            serviceName: apt["serviceName"] ?? "",
-            date: formattedDate,
-            time: apt["time"] ?? "",
-          }),
-        });
-
-        sent++;
-        logger.info(`Reminder sent to ${clientEmail} for appointment ${doc.id}`);
-
-        // Also send WhatsApp reminder if the client has a phone number
-        const clientPhone: string = client["phone"] ?? "";
-        if (clientPhone) {
-          await sendWhatsAppMessage(
-            clientPhone,
-            whatsAppAppointmentReminderMessage({
+        if (clientEmail) {
+          await sendEmail({
+            to: [{ email: clientEmail, name: clientName }],
+            subject: `⏰ Recordatorio: tu cita mañana – ${apt["serviceName"]}`,
+            htmlContent: appointmentReminderHtml({
               clientName,
               serviceName: apt["serviceName"] ?? "",
               date: formattedDate,
               time: apt["time"] ?? "",
-            })
+            }),
+          });
+
+          sent++;
+          logger.info(`Reminder sent to ${clientEmail} for appointment ${doc.id}`);
+        }
+
+        // Also send WhatsApp reminder if the client has a phone number
+        if (clientPhone) {
+          const reminderParams = {
+            clientName,
+            serviceName: apt["serviceName"] ?? "",
+            date: formattedDate,
+            time: apt["time"] ?? "",
+          };
+          await sendWhatsAppWithFallback(
+            clientPhone,
+            whatsAppAppointmentReminderMessage(reminderParams),
+            WHATSAPP_TEMPLATE_NAMES.appointmentReminder,
+            WHATSAPP_TEMPLATE_LANGUAGE,
+            appointmentReminderTemplateComponents(reminderParams)
           );
         }
       } catch (err) {

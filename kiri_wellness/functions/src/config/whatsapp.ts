@@ -168,22 +168,25 @@ export interface WhatsAppTemplateComponent {
  * See: https://developers.facebook.com/docs/whatsapp/cloud-api/guides/send-message-templates
  *
  * Failures are swallowed and logged so they never break the calling flow.
+ *
+ * @returns true if the API accepted the message, false otherwise (e.g. the
+ *          template is not yet approved in Meta Business Manager).
  */
 export async function sendWhatsAppTemplate(
   to: string,
   templateName: string,
   languageCode: string,
   components: WhatsAppTemplateComponent[]
-): Promise<void> {
+): Promise<boolean> {
   if (!isWhatsAppEnabled()) {
     logger.warn("WhatsApp not configured – skipping template", { to, templateName });
-    return;
+    return false;
   }
 
   const normalizedTo = normalizePhone(to);
   if (!normalizedTo) {
     logger.warn("Invalid phone number for WhatsApp template – skipping", { to });
-    return;
+    return false;
   }
 
   const payload = {
@@ -218,11 +221,36 @@ export async function sendWhatsAppTemplate(
         templateName,
         body: errorBody,
       });
-      return;
+      return false;
     }
 
     logger.info("WhatsApp template sent", { to: normalizedTo, templateName });
+    return true;
   } catch (err) {
     logger.error("WhatsApp template request failed", { to: normalizedTo, templateName, err });
+    return false;
+  }
+}
+
+/**
+ * Sends a proactive notification using a pre-approved template, falling back
+ * to a free-form session message if the template call fails (e.g. because the
+ * template hasn't been created/approved in Meta Business Manager yet, or the
+ * message is outside the 24 h session window and the template genuinely
+ * doesn't exist). This keeps notifications working during the transition
+ * period before templates are registered, while preferring the
+ * production-safe template path once it's available.
+ */
+export async function sendWhatsAppWithFallback(
+  to: string,
+  fallbackText: string,
+  templateName: string,
+  languageCode: string,
+  components: WhatsAppTemplateComponent[]
+): Promise<void> {
+  const templateSent = await sendWhatsAppTemplate(to, templateName, languageCode, components);
+  if (!templateSent) {
+    logger.info("Template send failed, falling back to session message", { to, templateName });
+    await sendWhatsAppMessage(to, fallbackText);
   }
 }
