@@ -157,19 +157,19 @@ class _ClientsScreenState extends ConsumerState<ClientsScreen> {
   Future<void> _confirmDelete(BuildContext context, ClientModel client) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('Eliminar cliente'),
         content: Text(
             '¿Seguro que deseas eliminar a ${client.fullName}? Esta acción no se puede deshacer.'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(dialogContext, false),
             child: const Text('Cancelar'),
           ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: AppTheme.error),
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(dialogContext, true),
             child: const Text('Eliminar'),
           ),
         ],
@@ -395,7 +395,7 @@ class _ClientTile extends ConsumerWidget {
   }
 
   String _initials(String name) {
-    final parts = name.trim().split(' ');
+    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
     if (parts.isEmpty) return '?';
     if (parts.length == 1) return parts[0][0].toUpperCase();
     return (parts[0][0] + parts[1][0]).toUpperCase();

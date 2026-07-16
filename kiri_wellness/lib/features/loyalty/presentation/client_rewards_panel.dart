@@ -246,7 +246,7 @@ class _RedeemButtonState extends ConsumerState<_RedeemButton> {
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Canjear regalía'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -275,11 +275,11 @@ class _RedeemButtonState extends ConsumerState<_RedeemButton> {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
+              onPressed: () => Navigator.pop(dialogContext, false),
               child: const Text('Cancelar')),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: AppTheme.primary),
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(dialogContext, true),
             child: const Text('Canjear'),
           ),
         ],

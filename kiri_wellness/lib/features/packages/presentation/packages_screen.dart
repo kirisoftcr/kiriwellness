@@ -81,17 +81,17 @@ class PackagesScreen extends ConsumerWidget {
   void _confirmDelete(BuildContext context, WidgetRef ref, PackageModel pkg) {
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Eliminar paquete'),
         content: Text('¿Deseas desactivar el paquete "${pkg.name}"?'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.pop(dialogContext),
               child: const Text('Cancelar')),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: AppTheme.error),
             onPressed: () async {
-              Navigator.pop(context);
+              Navigator.pop(dialogContext);
               try {
                 await ref.read(packageRepositoryProvider).delete(pkg.id);
               } catch (e) {
